@@ -1222,45 +1222,6 @@ async def refresh_index_once() -> None:
     st.index_warmed = True
 
 
-#: How long the doc-embed backfill loop waits when there is nothing it can do
-#: (no backfill on this brain, the kill switch is on, or a tick failed).
-_DOC_BACKFILL_IDLE_SECONDS = 300.0
-
-
-@background_task(name="memory_doc_embed_backfill", interval=_DOC_BACKFILL_IDLE_SECONDS)
-async def memory_doc_embed_backfill_loop(_ctx: Any) -> None:
-    """Give this agent's document pools the vectors an embedder outage left missing.
-
-    Connected-data syncs and pushed records alike are embedded once, at write
-    time; any written while the embedder could not serve are stored lexical-only.
-    Every one of the agent's doc pools lives in arcmemory's single doc-pool store,
-    so this one loop covers them all (shared stores are the connected-data
-    service's). The Brain owns the retry
-    (bounded ticks, background embed lane, backoff while the embedder is down);
-    this loop only drives it off the turn path and sleeps what each tick asks.
-    Obeys the same kill switch as the sleep loop: it is embedding work.
-    """
-    while True:
-        delay = _DOC_BACKFILL_IDLE_SECONDS
-        if not _consolidation_off():
-            try:
-                delay = await doc_embed_backfill_once()
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # reason: fail-open — a backfill error must not crash the agent
-                _logger.warning("memory doc-embed backfill tick failed", exc_info=True)
-        await asyncio.sleep(delay)
-
-
-async def doc_embed_backfill_once() -> float:
-    """One bounded backfill tick of this agent's document pools; seconds to wait next."""
-    st = _runtime.state()
-    maintain = getattr(st.brain, "maintain_doc_embeddings", None)
-    if not st.active or not callable(maintain):
-        return _DOC_BACKFILL_IDLE_SECONDS
-    return float(await maintain())
-
-
 def _agent_minute_offset(agent_did: str) -> int:
     """A stable 0-59 minute offset from the DID, so the fleet's nightly passes do
     not all call the model at the same instant."""

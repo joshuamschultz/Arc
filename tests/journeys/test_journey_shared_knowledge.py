@@ -488,20 +488,21 @@ async def test_stores_the_agents_already_hold_move_into_one_on_their_own(
     from the agents' own cursor, no provider is asked for anything, and a second
     start finds nothing left to do.
     """
-    from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
+    from arcagent.modules.connected_data.sync_worker import RemoteIngestPort
 
     account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
     await _held_by_two_agents(deployment, enable_modules, account)
 
     release = asyncio.Event()
-    adopt = ArcMemoryIngestAdapter.adopt_documents
+    adopt = RemoteIngestPort.adopt_documents
 
+    # The adoption itself runs in the sync worker; it is held where it is asked for.
     async def held(self: Any, *args: Any, dry_run: bool, **kwargs: Any) -> Any:
         if not dry_run:
             await release.wait()
         return await adopt(self, *args, dry_run=dry_run, **kwargs)
 
-    monkeypatch.setattr(ArcMemoryIngestAdapter, "adopt_documents", held)
+    monkeypatch.setattr(RemoteIngestPort, "adopt_documents", held)
     # The agent that finds the other one mid-move tries again soon, not in an hour.
     monkeypatch.setattr("arcagent.modules.connected_data.service._MIGRATION_RETRY_SECONDS", 0.5)
     with caplog.at_level(logging.INFO, logger="arcagent.audit"):
@@ -568,16 +569,18 @@ async def test_a_migration_that_cannot_prove_every_document_landed_keeps_the_own
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A store that reports success but holds fewer documents never costs the agent its copy."""
-    from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
+    from arcagent.modules.connected_data.sync_worker import RemoteIngestPort
 
     account = Account("wiki", "confluence", "Team wiki", list(WIKI_PAGES))
     await _held_by_two_agents(deployment, enable_modules, account)
 
+    # A store write that reports success and lands nothing (the adoption runs in
+    # the sync worker; its answer is what the agent's process sees).
     async def drops_everything(self: Any, *args: Any, dry_run: bool, **kwargs: Any) -> Any:
         del self, args, dry_run, kwargs
         return {"documents": 3, "adopted": 3, "deduplicated": 0, "skipped": 0}
 
-    monkeypatch.setattr(ArcMemoryIngestAdapter, "adopt_documents", drops_everything)
+    monkeypatch.setattr(RemoteIngestPort, "adopt_documents", drops_everything)
     with caplog.at_level(logging.INFO, logger="arcagent"):
         first, second = await _upgraded(deployment, enable_modules)
         try:

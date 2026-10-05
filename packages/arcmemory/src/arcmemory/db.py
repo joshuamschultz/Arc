@@ -95,13 +95,19 @@ def sqlite_vec_loadable() -> bool:
         conn.close()
 
 
-def open_db_connection(db_path: Path) -> sqlite3.Connection:
+def open_db_connection(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     """A read-mostly connection to an existing index DB, with sqlite-vec loaded.
 
     For background readers (the vector-sidecar builder) that know only the
     file path; the caller owns the connection and closes it on its own thread.
+    ``read_only`` opens the file ``mode=ro`` and ``query_only``: a process that
+    must never write the store cannot, even by mistake.
     """
-    conn = sqlite3.connect(str(db_path))
+    if read_only:
+        conn = sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)
+        conn.execute("PRAGMA query_only=ON")
+    else:
+        conn = sqlite3.connect(str(db_path))
     _load_sqlite_vec(conn)
     return conn
 
@@ -115,11 +121,19 @@ class MemoryDB:
     """
 
     def __init__(
-        self, workspace: Path, *, dims: int = DEFAULT_DIMS, durability: Durability = "full"
+        self,
+        workspace: Path,
+        *,
+        dims: int = DEFAULT_DIMS,
+        durability: Durability = "full",
+        read_only: bool = False,
     ) -> None:
         self._workspace = Path(workspace)
         self._dims = dims
         self._durability = durability
+        #: A reader in a process that must never write this store (the main
+        #: process, while the sync worker owns every connected-data write).
+        self._read_only = read_only
         self._db_path = self._workspace / "memory" / "index.db"
         self._conn: sqlite3.Connection | None = None
         self._vec_available = False
@@ -161,13 +175,17 @@ class MemoryDB:
         """Open the DB (creating the file + schema on first call)."""
         if self._conn is not None:
             return self._conn
-
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self._read_only:
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn, self._vec_available = self._open()
         self._conn = conn
-        self._create_schema(conn)
-        row = conn.execute("SELECT value FROM index_meta WHERE key='instance_id'").fetchone()
-        self._instance_id = str(row[0])
+        if not self._read_only:
+            self._create_schema(conn)
+        try:
+            row = conn.execute("SELECT value FROM index_meta WHERE key='instance_id'").fetchone()
+        except sqlite3.OperationalError:  # a reader on a store not yet migrated
+            row = None
+        self._instance_id = str(row[0]) if row is not None else ""
         return conn
 
     def open_connection(self) -> sqlite3.Connection:
@@ -180,6 +198,8 @@ class MemoryDB:
         return self._open()[0]
 
     def _open(self) -> tuple[sqlite3.Connection, bool]:
+        if self._read_only:
+            return self._open_read_only()
         conn = sqlite3.connect(str(self._db_path))
         conn.execute("PRAGMA journal_mode=WAL")
         # Under FULL each commit waits on an fsync. Only a provider-rebuildable
@@ -214,6 +234,28 @@ class MemoryDB:
         if self._worker_conn is not None:
             self._worker_conn.close()
             self._worker_conn = None
+
+    def _open_read_only(self) -> tuple[sqlite3.Connection, bool]:
+        """A connection that cannot write: the file opened ``mode=ro`` and ``query_only``.
+
+        A store that does not exist yet reads as empty: an in-memory database
+        with the schema, so no reader ever creates or migrates the file.
+        """
+        if self._db_path.is_file():
+            conn = sqlite3.connect(f"{self._db_path.resolve().as_uri()}?mode=ro", uri=True)
+            vec = _load_sqlite_vec(conn)
+        else:
+            conn = sqlite3.connect(":memory:")
+            vec = _load_sqlite_vec(conn)
+            self._vec_available = vec
+            self._create_schema(conn)
+        conn.execute("PRAGMA query_only=ON")
+        return conn, vec
+
+    @property
+    def read_only(self) -> bool:
+        """Whether this handle can never write its store."""
+        return self._read_only
 
     def close(self) -> None:
         """Close both connections and stop the worker thread (idempotent)."""

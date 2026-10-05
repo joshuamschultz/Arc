@@ -38,6 +38,7 @@ import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { JsonBlock } from '@/components/json-block'
 import { GuidesSection } from '@/components/connection-guides'
+import { SyncWorkerStatusLine } from '@/components/sync-worker-status'
 import { Chip, MonoChip, SourceSelect, Th } from '@/components/knowledge-connection-bits'
 import { isDatastoreKind } from '@/lib/connection-kind'
 import { fmtBytes } from '@/lib/format'
@@ -1199,6 +1200,7 @@ export function ConnectionsBrowser({
         ))}
       </TabsList>
       <TabsContent value="sources">
+        <SyncWorkerStatusLine />
         <SourcesSection agentId={agentId} initialConnectionId={initialConnectionId} />
       </TabsContent>
       <TabsContent value="browse">

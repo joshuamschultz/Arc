@@ -276,7 +276,18 @@ def __getattr__(name: str) -> Any:
         from arcagent.core.run_contract import DeliveryUnavailableError
 
         return DeliveryUnavailableError
-    if name == "embed_profile_of":
+    if name in {"sync_worker_supervisor", "shutdown_sync_worker", "run_sync_worker"}:
+        # The connected-data store writer, a supervised child process. Lazy: a
+        # process that never writes a connected store never imports it.
+        from arcagent.modules.connected_data import sync_worker
+        from arcagent.modules.connected_data.sync_worker.worker import main
+
+        return {
+            "sync_worker_supervisor": sync_worker.process_supervisor,
+            "shutdown_sync_worker": sync_worker.shutdown_process_supervisor,
+            "run_sync_worker": main,
+        }[name]
+    if name == "embedding_profile_of":
         # Which embedding profile an ``embed_*`` setting triple names (connected data).
         from arcagent.modules.connected_data.ingest import profile_of
 
@@ -477,7 +488,7 @@ __all__ = [
     "discover_modules",
     "dumps_toml",
     "edit_pulse_check",
-    "embed_profile_of",
+    "embedding_profile_of",
     "find_secret",
     "generate_schedule_id",
     "global_capabilities_root",
@@ -513,9 +524,11 @@ __all__ = [
     "reviewed_bundle_digest",
     "revoke_capability",
     "revoke_skill_folder",
+    "run_sync_worker",
     "scaffold",
     "serve_mcp_stdio",
     "set_workflow_runner",
+    "shutdown_sync_worker",
     "sidecar_path",
     "sign_capability",
     "sign_skill_folder",
@@ -525,6 +538,7 @@ __all__ = [
     "strict_sections_for_agent",
     "stricter_tier",
     "summarize_tool_policy",
+    "sync_worker_supervisor",
     "tier_rank",
     "tool",
     "trust_bundled_capabilities",

@@ -189,6 +189,7 @@ class ArcMemoryIngestAdapter(IngestPort):
         audit_sink: Any | None = None,
         authority: DelegatedAuthority | None = None,
         durability: Literal["full", "normal"] = "full",
+        read_only: bool = False,
     ) -> None:
         self._workspace = Path(workspace)
         self._agent_did = agent_did
@@ -204,6 +205,9 @@ class ArcMemoryIngestAdapter(IngestPort):
         #: ``normal`` only for a store rebuildable from its provider (the shared
         #: connection store); an agent's own workspace store stays ``full``.
         self._durability = durability
+        #: The main process's handle: it searches and lists, and every write goes
+        #: to the sync worker instead (``sync_worker.RemoteIngestPort``).
+        self._read_only = read_only
         self._service: Any | None = None
 
     def _connected_service(self) -> Any:
@@ -227,6 +231,7 @@ class ArcMemoryIngestAdapter(IngestPort):
             audit_sink=self._audit_sink,
             authority=_MemoryAuthority(authority) if authority is not None else None,
             durability=self._durability,
+            read_only=self._read_only,
         )
         return self._service
 
@@ -247,6 +252,16 @@ class ArcMemoryIngestAdapter(IngestPort):
         service, self._service = self._service, None
         if service is not None:
             service.close()
+
+    @property
+    def workspace(self) -> Path:
+        """The store's root: an agent's workspace, or a connection's shared store."""
+        return self._workspace
+
+    @property
+    def agent_did(self) -> str:
+        """Whose store this is: the agent, or the connection's knowledge principal."""
+        return self._agent_did
 
     @staticmethod
     def _source_model(module: Any, source: SourceDescription) -> Any:
@@ -575,6 +590,13 @@ class ArcMemoryIngestAdapter(IngestPort):
         """Remove source artifacts and its mapping on connection revocation."""
         module = import_module("arcmemory.connected_data")
         await self._connected_service().purge_source(self._source_model(module, source))
+
+    async def unregister_datastore(self, source: SourceDescription) -> None:
+        """Detach a revoked source's datastore port from the agent's live Brain.
+
+        The Brain lives in the agent's process, so this half of a revoke runs
+        there, after the store itself was purged.
+        """
         if self._authority is not None:
             return  # a shared store is attached to no Brain
         runtime = import_module("arcagent.modules.memory._runtime")
@@ -584,7 +606,7 @@ class ArcMemoryIngestAdapter(IngestPort):
             await unregister(self.canonical_source_id(source), caller_did=self._agent_did)
 
 
-def _embed_settings(agent_did: str) -> tuple[str, str, str] | None:
+def embed_settings(agent_did: str) -> tuple[str, str, str] | None:
     """The memory module's ``embed_*`` settings for one agent, or ``None`` without one."""
     try:
         settings = (
@@ -607,9 +629,17 @@ def memory_embedder(agent_did: str) -> Any | None:
     defaults included) rather than carrying a second copy of them here. Without
     the memory module the index is lexical only.
     """
-    settings = _embed_settings(agent_did)
-    if settings is None:
-        return None
+    settings = embed_settings(agent_did)
+    return None if settings is None else embedder_from(agent_did, settings)
+
+
+def embedder_from(agent_did: str, settings: tuple[str, str, str]) -> Any | None:
+    """Build the embedder named by ``(embed_backend, embed_model, embed_base_url)``.
+
+    The sync worker has no memory module of its own; the main process names the
+    agent's settings and the worker builds the same embedder from them, so a
+    document is embedded in the vector space its question is asked in.
+    """
     try:
         build = import_module("arcmemory.provider").build_embedder
     except ImportError:
@@ -620,7 +650,7 @@ def memory_embedder(agent_did: str) -> Any | None:
 
 def embedding_profile(agent_did: str) -> str:
     """A stable name for how this agent embeds: a shared store is read as it was written."""
-    settings = _embed_settings(agent_did)
+    settings = embed_settings(agent_did)
     if settings is None:
         return "lexical"
     return profile_of(*settings)

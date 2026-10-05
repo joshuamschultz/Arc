@@ -819,6 +819,23 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcmemory/tests/unit/test_doc_embed_backfill.py",
         "packages/arcmemory/tests/unit/test_doc_embed_backfill_operator.py",
     ),
+    # alpha-2 sync worker: every connected-store write runs in one supervised child
+    # process over an authenticated Unix socket. A request sealed with a guessed
+    # secret, a captured request replayed, a peer that is another user or another
+    # process (even one holding the secret), and an authenticated write naming a
+    # store root the worker did not derive itself (another agent's workspace, a
+    # system path, a shared store under another root) are refused and write nothing.
+    # A write to a shared store needs the writer's live subscription; a store still
+    # read by an agent is never dropped. The main process signs the worker's seals
+    # but only a canonical seal payload for that store under its pinned key, never
+    # arbitrary bytes (confused deputy).
+    "sync worker — forged, replayed or foreign requests; stores outside the allowed set": (
+        "packages/arcagent/tests/security/test_sync_worker_abuse.py",
+        "packages/arcagent/tests/unit/modules/connected_data/test_sync_worker_protocol.py",
+        "packages/arcagent/tests/unit/modules/connected_data/test_sync_worker_store_authority.py",
+        "packages/arcmemory/tests/security/test_okf_delegated_signing.py",
+        "tests/journeys/test_journey_sync_worker.py",
+    ),
     # SPEC-035 OQ-3 (Josh, 2026-10-03): an operator's "Always allow" on a trifecta
     # approval stands for that agent. A grant for combination A never satisfies a
     # wider combination B; a grant for agent X never satisfies agent Y; a grant

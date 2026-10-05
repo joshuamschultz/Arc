@@ -11,15 +11,20 @@ from pathlib import Path
 
 import pytest
 from arcstore.backends.memory import FakeBackend
+from packages.arcagent.tests.sync_worker_fakes import (
+    LoopbackHost,
+    approve_document_mapping,
+    serve_from,
+)
 
-from arcagent.connected_data import MappingDeniedError
 from arcagent.extension.knowledge_subscriptions import (
     KnowledgeSubscription,
     KnowledgeSubscriptions,
     knowledge_principal,
 )
 from arcagent.extension.source import SourceDescription
-from arcagent.modules.connected_data.shared import SharedKnowledge, SubscriberAuthority
+from arcagent.modules.connected_data.shared import SharedKnowledge
+from arcagent.modules.connected_data.sync_worker.host import HostSubscriberAuthority
 
 _A = "did:arc:test:agent-a"
 _B = "did:arc:test:agent-b"
@@ -35,7 +40,14 @@ def _subscription(agent_did: str, *, approval_id: str = "approval-a") -> Knowled
     )
 
 
-def _shared(backend: FakeBackend, root: Path, agent_did: str = _A) -> SharedKnowledge:
+@pytest.fixture(autouse=True)
+def _fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+
+
+def _shared(
+    backend: FakeBackend, agent_did: str = _A, profile: str = "lexical"
+) -> SharedKnowledge:
     async def opener() -> FakeBackend:
         return backend
 
@@ -43,8 +55,8 @@ def _shared(backend: FakeBackend, root: Path, agent_did: str = _A) -> SharedKnow
         agent_did=agent_did,
         arcstore_opener=opener,
         embedder=lambda: None,
-        profile=lambda: "lexical",
-        root=lambda: root,
+        profile=lambda: profile,
+        embed=lambda: None,
     )
 
 
@@ -54,9 +66,11 @@ def _source() -> SourceDescription:
 
 @pytest.mark.asyncio
 async def test_a_writer_whose_subscription_is_gone_is_refused_mid_run() -> None:
-    registry = KnowledgeSubscriptions(FakeBackend(), actor_did=_A)
+    backend = FakeBackend()
+    registry = KnowledgeSubscriptions(backend, actor_did=_A)
     await registry.put(_subscription(_A))
-    authority = SubscriberAuthority(registry, _A, "wiki", "approval-a")
+    # The worker asks the main process, which reads the live subscription row.
+    authority = HostSubscriberAuthority(LoopbackHost(backend, _A), _A, "wiki", "approval-a")  # type: ignore[arg-type]  # reason: in-process host
     assert await authority.authorized_homes() is not None
 
     await registry.delete(_A, "wiki")
@@ -66,10 +80,11 @@ async def test_a_writer_whose_subscription_is_gone_is_refused_mid_run() -> None:
 
 @pytest.mark.asyncio
 async def test_a_writer_cannot_ride_a_subscription_verified_against_another_approval() -> None:
-    registry = KnowledgeSubscriptions(FakeBackend(), actor_did=_A)
+    backend = FakeBackend()
+    registry = KnowledgeSubscriptions(backend, actor_did=_A)
     await registry.put(_subscription(_A, approval_id="approval-new"))
 
-    stale = SubscriberAuthority(registry, _A, "wiki", "approval-old")
+    stale = HostSubscriberAuthority(LoopbackHost(backend, _A), _A, "wiki", "approval-old")  # type: ignore[arg-type]  # reason: in-process host
 
     assert await stale.authorized_homes() is None
 
@@ -102,10 +117,10 @@ async def test_a_malformed_subscription_row_authorizes_nothing() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_readers_port_can_write_nothing(tmp_path: Path) -> None:
-    reader = await _shared(FakeBackend(), tmp_path).reader("wiki")
+async def test_a_readers_port_can_write_nothing() -> None:
+    reader = await _shared(FakeBackend()).reader("wiki")
     try:
-        with pytest.raises(MappingDeniedError):
+        with pytest.raises(PermissionError, match="read-only"):
             await reader.require_approved_mapping(_source())
     finally:
         await reader.aclose()
@@ -120,19 +135,16 @@ async def test_the_store_is_filed_under_no_agents_identity() -> None:
     assert knowledge_principal("wiki") == principal != knowledge_principal("mail")
 
 
-def test_a_store_embedded_one_way_is_not_read_another(tmp_path: Path) -> None:
+async def test_a_store_embedded_one_way_is_not_read_another() -> None:
     backend = FakeBackend()
-    first = _shared(backend, tmp_path)
-    assert first.claim_profile("wiki")
+    serve_from(backend, _A, _B)
+    first_approval = await approve_document_mapping(backend, _A)
+    other_approval = await approve_document_mapping(backend, _B)
+    first = _shared(backend)
+    assert await first.claim_profile("wiki", first_approval)
 
-    other = SharedKnowledge(
-        agent_did=_B,
-        arcstore_opener=first._arcstore_opener,
-        embedder=lambda: None,
-        profile=lambda: "another-model",
-        root=lambda: tmp_path,
-    )
+    other = _shared(backend, _B, profile="another-model")
 
     assert not other.profile_compatible("wiki")
-    assert not other.claim_profile("wiki")
-    assert first.claim_profile("wiki")
+    assert not await other.claim_profile("wiki", other_approval)
+    assert await first.claim_profile("wiki", first_approval)

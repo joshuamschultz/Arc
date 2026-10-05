@@ -174,6 +174,9 @@ class ScopeAnn:
         self._scope = scope
         self._dims = db.dims
         self._instance_id = db.instance_id
+        #: A reader's index (the main process over a store the sync worker writes):
+        #: built and searched in memory, never saved; the writer keeps the sidecar.
+        self._read_only = db.read_only
         self._index_path, self._meta_path = sidecar_paths(db, scope)
         self._lock = threading.Lock()
         self._index: Index | None = None
@@ -332,7 +335,7 @@ class ScopeAnn:
 
     def _load_or_rebuild(self, force_rebuild: bool) -> None:
         try:
-            conn = open_db_connection(self._db_path)
+            conn = open_db_connection(self._db_path, read_only=self._read_only)
             try:
                 loaded = None if force_rebuild else self._load_sidecar(conn)
                 if loaded is not None:
@@ -347,7 +350,8 @@ class ScopeAnn:
             self._ready.set()
             index = _new_index(self._dims)
             _add_nonzero(index, snapshot.keys, snapshot.vectors, threads=_build_threads())
-            self._save(index, snapshot.generation)
+            if not self._read_only:
+                self._save(index, snapshot.generation)
             self._install(index, snapshot.generation, source="rebuild")
         except Exception:  # reason: a bad sidecar/DB must degrade search, never crash it
             _logger.exception("vector sidecar build failed for one scope; retrying later")
@@ -433,6 +437,8 @@ class ScopeAnn:
     # -- persistence -------------------------------------------------------
 
     def _schedule_save_locked(self) -> None:
+        if self._read_only:
+            return
         if self._save_timer is not None:
             self._save_timer.cancel()
         self._save_timer = threading.Timer(SAVE_DELAY_S, self.flush)
@@ -442,7 +448,7 @@ class ScopeAnn:
     def flush(self) -> None:
         """Write the index to disk now if it changed since the last save."""
         with self._lock:
-            if self._index is None or not self._dirty:
+            if self._read_only or self._index is None or not self._dirty:
                 return
             self._save(self._index, self._generation)
             self._dirty = False
@@ -509,14 +515,15 @@ def _search_exact(snapshot: _Snapshot, vector: np.ndarray, top_k: int) -> list[t
 
 # Process-wide cache: every MemoryDB/backend instance over the same DB file must
 # share ONE in-memory index per scope, or a write through one instance would leave
-# another's copy stale. Keyed by the file's path AND its creation-time instance id.
-_REGISTRY: dict[tuple[str, str, str], ScopeAnn] = {}
+# another's copy stale. Keyed by the file's path AND its creation-time instance id,
+# and by whether the handle may write: a reader's index never saves a sidecar.
+_REGISTRY: dict[tuple[str, str, str, bool], ScopeAnn] = {}
 _REGISTRY_LOCK = threading.Lock()
 
 
 def scope_ann(db: MemoryDB, scope: str) -> ScopeAnn:
     """The shared :class:`ScopeAnn` for ``scope`` in ``db``'s file."""
-    key = (str(db.db_path.resolve()), db.instance_id, scope)
+    key = (str(db.db_path.resolve()), db.instance_id, scope, db.read_only)
     with _REGISTRY_LOCK:
         found = _REGISTRY.get(key)
         if found is None:

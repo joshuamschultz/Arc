@@ -241,6 +241,15 @@ class ArcMemoryBrain:
         # The document-pool embed backfill, built on first use and kept: it
         # remembers how far its current pass has got.
         self._doc_backfill: DocEmbedBackfill | None = None
+        # Document pools are read through a handle that cannot write: the agent's
+        # connected copies are written by the sync worker, never by this process.
+        self._doc_reader_db: MemoryDB | None = None
+
+    def _doc_reader(self) -> MemoryDB:
+        """A read-only handle on this workspace's index, for document-pool reads."""
+        if self._doc_reader_db is None:
+            self._doc_reader_db = MemoryDB(self._workspace, read_only=True)
+        return self._doc_reader_db
 
     # -- Brain Protocol ----------------------------------------------------
 
@@ -915,7 +924,11 @@ class ArcMemoryBrain:
         if not self._cfg.doc_search_enabled:
             return []
         hits = await DocIndex(
-            self._db, self._workspace, self._cfg, embedder=self._embedder, audit_sink=self._audit
+            self._doc_reader(),
+            self._workspace,
+            self._cfg,
+            embedder=self._embedder,
+            audit_sink=self._audit,
         ).document_search(
             query, self._agent_did, source_id=source_id, source_ids=source_ids, top_k=top_k
         )

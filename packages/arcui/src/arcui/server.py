@@ -706,6 +706,10 @@ def create_app(
         credential_renewer = CredentialRenewer(credential_connections)
         credential_renewer.start()
         starlette_app.state.credential_renewer = credential_renewer
+        # Connected-data store writes run in their own supervised process; this
+        # one only reads the stores and answers the worker's arcstore and signing
+        # requests. Started before any agent, stopped after every agent.
+        sync_worker = await _start_sync_worker(starlette_app)
         # P18-1: one probe loop per process keeps every connection's health record
         # true and delivers the one operator notice an outage earns.
         connection_health = build_connection_health_monitor(starlette_app)
@@ -741,6 +745,7 @@ def create_app(
             worm_writer = getattr(starlette_app.state, "audit_worm", None)
             if worm_writer is not None:
                 worm_writer.sink.close()
+            await _stop_sync_worker(sync_worker)
             try:
                 await task_store_backend.stop()
             except Exception:  # reason: fail-open — continue shutdown
@@ -974,6 +979,36 @@ def create_app(
     app.state.attachment_store_for = _attachment_store_for
 
     return app
+
+
+async def _start_sync_worker(app: Starlette) -> Any:
+    """Spawn and supervise the sync worker; it reaches arcstore and the audit chain via us."""
+    import arcagent
+
+    supervisor = arcagent.sync_worker_supervisor()
+    backend = app.state.arcstore_backend
+
+    async def opener() -> Any:
+        return backend
+
+    worm = getattr(app.state, "audit_worm", None)
+    supervisor.host.bind(
+        arcstore_opener=opener, audit_sink=worm.sink if worm is not None else None
+    )
+    await supervisor.start()
+    app.state.sync_worker = supervisor
+    return supervisor
+
+
+async def _stop_sync_worker(supervisor: Any) -> None:
+    import arcagent
+
+    try:
+        await arcagent.shutdown_sync_worker()
+    except Exception:  # reason: fail-open — continue shutdown; the child exits on stdin EOF
+        logger.exception("lifespan: error stopping the sync worker")
+    if supervisor is not None:
+        logger.info("lifespan: sync worker stopped")
 
 
 def _attach_workflow_plane(app: Starlette, embedded_gateway: Any) -> None:

@@ -14,6 +14,8 @@ from typing import Any
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arcstore.source_sync import InMemorySourceSyncStore
+from arctrust.paths import connected_knowledge_dir
+from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
 from arcagent.connected_data import KnowledgeHome, MappingPlan, SyncLimits
 from arcagent.extension.knowledge_subscriptions import KnowledgeSubscriptions
@@ -22,21 +24,45 @@ from arcagent.modules.connected_data.service import ConnectedDataService
 from arcagent.modules.connected_data.shared import SharedKnowledge
 
 _DID = "did:arc:test:agent"
+_OTHER = "did:arc:test:other"
+
+
+@pytest.fixture(autouse=True)
+def _fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+
+
+async def _approved(backend: FakeBackend) -> FakeBackend:
+    """Both agents' document mappings are approved; the worker re-reads them."""
+    serve_from(backend, _DID, _OTHER)
+    await approve_document_mapping(backend, _DID, approval_id="approval-1")
+    await approve_document_mapping(backend, _OTHER, approval_id="approval-2")
+    return backend
+
+
+def _store_root(lane: Any) -> Path:
+    return connected_knowledge_dir() / lane.principal.rsplit(":", 1)[1]
 
 
 class _Private:
     """The agent's own port: an approved plan and how many documents it holds."""
 
-    def __init__(self, homes: tuple[KnowledgeHome, ...] | None, documents: int = 0) -> None:
+    def __init__(
+        self,
+        homes: tuple[KnowledgeHome, ...] | None,
+        documents: int = 0,
+        approval_id: str = "approval-1",
+    ) -> None:
         self.homes = homes
         self.documents = documents
+        self.approval_id = approval_id
 
     async def approved_mapping(self, source: SourceDescription) -> MappingPlan | None:
         del source
         if self.homes is None:
             return None
         return MappingPlan(
-            mapping_id="approval-1", homes=self.homes, revision="r", content_hash="h"
+            mapping_id=self.approval_id, homes=self.homes, revision="r", content_hash="h"
         )
 
     async def documents_indexed(self, source: SourceDescription) -> int:
@@ -62,7 +88,7 @@ def _service(tmp_path: Path, backend: FakeBackend, *, profile: str = "lexical") 
         arcstore_opener=opener,
         embedder=lambda: None,
         profile=lambda: profile,
-        root=lambda: tmp_path,
+        embed=lambda: None,
     )
     service = ConnectedDataService(
         _Catalog(),  # type: ignore[arg-type]  # reason: snapshot is all a lane decision reads
@@ -84,7 +110,7 @@ async def _subscribers(backend: FakeBackend) -> list[str]:
 
 @pytest.mark.asyncio
 async def test_an_approved_document_mapping_subscribes(tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = await _approved(FakeBackend())
     service = _service(tmp_path, backend)
 
     lane = await service._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,)))
@@ -107,11 +133,11 @@ async def test_an_approved_document_mapping_subscribes(tmp_path: Path) -> None:
 async def test_an_agent_that_can_no_longer_share_leaves_and_its_unread_store_goes(
     tmp_path: Path, private: _Private, profile: str
 ) -> None:
-    backend = FakeBackend()
+    backend = await _approved(FakeBackend())
     service = _service(tmp_path, backend, profile=profile)
     lane = await service._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,)))
     assert lane is not None
-    store_root = tmp_path / lane.principal.rsplit(":", 1)[1]
+    store_root = _store_root(lane)
     assert store_root.is_dir()
 
     after = await service._lane_for("wiki", _source(), private)
@@ -124,30 +150,34 @@ async def test_an_agent_that_can_no_longer_share_leaves_and_its_unread_store_goe
 
 @pytest.mark.asyncio
 async def test_a_store_still_read_by_another_agent_is_kept(tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = await _approved(FakeBackend())
     service = _service(tmp_path, backend)
     other = _service(tmp_path, backend)
-    other._agent_did = "did:arc:test:other"
-    other._shared.agent_did = "did:arc:test:other"
+    other._agent_did = _OTHER
+    other._shared.agent_did = _OTHER
     lane = await service._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,)))
-    assert await other._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,)))
+    assert await other._lane_for(
+        "wiki", _source(), _Private((KnowledgeHome.DOCUMENT,), approval_id="approval-2")
+    )
     assert lane is not None
 
     await service._lane_for("wiki", _source(), _Private(None))
 
-    assert await _subscribers(backend) == ["did:arc:test:other"]
-    assert (tmp_path / lane.principal.rsplit(":", 1)[1]).is_dir()
+    assert await _subscribers(backend) == [_OTHER]
+    assert _store_root(lane).is_dir()
 
 
 @pytest.mark.asyncio
 async def test_an_agent_that_embeds_differently_keeps_its_own_store(tmp_path: Path) -> None:
-    backend = FakeBackend()
+    backend = await _approved(FakeBackend())
     first = _service(tmp_path, backend, profile="model-a")
     assert await first._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,)))
     second = _service(tmp_path, backend, profile="model-b")
-    second._agent_did = "did:arc:test:other"
+    second._agent_did = _OTHER
+    second._shared.agent_did = _OTHER
+    own = _Private((KnowledgeHome.DOCUMENT,), approval_id="approval-2")
 
-    assert await second._lane_for("wiki", _source(), _Private((KnowledgeHome.DOCUMENT,))) is None
+    assert await second._lane_for("wiki", _source(), own) is None
     assert await _subscribers(backend) == [_DID]
 
 
@@ -165,7 +195,7 @@ async def test_each_connection_names_the_store_it_reads_from(
     tmp_path: Path, private: _Private, expected: str
 ) -> None:
     """J-K3: the card shows own copy, waiting to move, or shared, per connection."""
-    service = _service(tmp_path, FakeBackend())
+    service = _service(tmp_path, await _approved(FakeBackend()))
     assert service.lane("wiki") == "own", "nothing decided yet reads its own store"
 
     await service._lane_for("wiki", _source(), private)

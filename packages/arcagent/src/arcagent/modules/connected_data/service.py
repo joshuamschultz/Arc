@@ -7,7 +7,6 @@ import hashlib
 import inspect
 import logging
 import os
-import shutil
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -20,6 +19,8 @@ from arcagent.connected_data import (
     IngestPort,
     KnowledgeHome,
     ListSourceResources,
+    MappingDeniedError,
+    MappingPendingError,
     SourceDescription,
     SyncError,
     SyncLimits,
@@ -53,9 +54,10 @@ from arcagent.modules.connected_data.health import (
     ConnectionHealthTracker,
     is_terminal_sync_failure,
 )
-from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter
 from arcagent.modules.connected_data.shared import SHARED_HOMES, SharedKnowledge
 from arcagent.modules.connected_data.supervision import SyncSchedule
+from arcagent.modules.connected_data.sync_worker.remote_port import RemoteIngestPort
+from arcagent.modules.connected_data.sync_worker.specs import SyncWorkerUnavailableError
 
 _logger = logging.getLogger("arcagent.modules.connected_data.service")
 _CATALOG_RETRY_MAX_SECONDS = 30.0
@@ -121,6 +123,9 @@ _INTERRUPTED = "interrupted"
 
 #: The lane reason for an own copy the next sync moves into the shared store.
 _MIGRATION_PENDING = "migration_pending"
+
+#: The lane reason while the agent has no approved mapping of a connection yet.
+_MAPPING_NOT_APPROVED = "mapping_not_approved"
 
 
 class SourceRefusedError(RuntimeError):
@@ -261,6 +266,7 @@ class ConnectedDataService:
         terminal_recheck_seconds: float = 3600.0,
         failure_ceiling: int = 5,
         shared: SharedKnowledge | None = None,
+        own_store: Callable[[], Awaitable[IngestPort]] | None = None,
         guide_refresh_debounce_seconds: float = 2.0,
     ) -> None:
         self._catalog = catalog
@@ -310,6 +316,8 @@ class ConnectedDataService:
         # connections this agent reads from a shared store, by connection id; a
         # connection absent from it is synced into the agent's own store as before.
         self._shared = shared
+        #: The agent's own document store (its workspace), for the embed backfill.
+        self._own_store = own_store
         self._lanes: dict[str, KnowledgeSubscription] = {}
         #: Why a connection reads its own store, when the lane decision said so.
         self._lane_waits: dict[str, str] = {}
@@ -334,7 +342,7 @@ class ConnectedDataService:
         # an interval later: the monitor otherwise slept on an empty catalog.
         self._stop_listening = self._catalog.on_change(self._wake.set)
         self._monitor = asyncio.create_task(self._monitor_loop(), name="connected-data-sync")
-        if self._shared is not None:
+        if self._shared is not None or self._own_store is not None:
             self._embed_backfill = asyncio.create_task(
                 self._embed_backfill_loop(), name="connected-data-embed-backfill"
             )
@@ -934,7 +942,8 @@ class ConnectedDataService:
                 await self._emit("connected_data.sync.monitor_failed", {"error": _name(exc)})
             try:
                 await asyncio.wait_for(
-                    self._wake.wait(), timeout=self._timing.seconds_until_next()
+                    self._wake.wait(),
+                    timeout=self._timing.seconds_until_next(running=self._running_ids()),
                 )
             except TimeoutError:
                 pass
@@ -946,21 +955,23 @@ class ConnectedDataService:
             await asyncio.sleep(await self.embed_backfill_once())
 
     async def embed_backfill_once(self) -> float:
-        """One bounded embed-backfill tick per shared store this agent subscribes to.
+        """One bounded embed-backfill tick per store this agent writes or reads shared.
 
-        The agent's own document pools are backfilled by its memory module (the
-        Brain), in the one store arcmemory keeps doc pools in. Each shared store is
-        reached through a WRITER port, so the subscriber's grant is
-        re-checked before anything is written. arcmemory keeps it to one backfill
-        per store at a time (other subscribers' ticks report it busy) and never
-        rewrites text, only vectors, so a sync of the same store may run
-        alongside; the connection's sync lease is not taken, because a sync that
-        finds it taken skips its whole run. Returns the seconds until the next
-        tick: the soonest any store asked for.
+        Covers the agent's own document pools (its workspace store: connected
+        copies and pushed documents alike) and every shared store it subscribes
+        to. Each tick is a write, so it runs in the sync worker: the agent's own
+        store under the agent, each shared store through a WRITER port whose
+        subscription the worker re-checks first. arcmemory keeps it to one
+        backfill per store at a time and never rewrites text, only vectors, so a
+        sync of the same store may run alongside; the connection's sync lease is
+        not taken, because a sync that finds it taken skips its whole run.
+        Returns the seconds until the next tick: the soonest any store asked for.
         """
         if _embedding_off():
             return _EMBED_BACKFILL_IDLE_SECONDS
         delays = [_EMBED_BACKFILL_IDLE_SECONDS]
+        if self._own_store is not None:
+            delays.append(await self._embed_backfill_port("own", self._own_store))
         shared = self._shared
         if shared is None:
             return min(delays)
@@ -987,6 +998,9 @@ class ConnectedDataService:
             if not callable(maintain):
                 return _EMBED_BACKFILL_IDLE_SECONDS
             return float(await maintain())
+        except SyncWorkerUnavailableError as exc:
+            # The store's writer is restarting: try again when it should be back.
+            return exc.retry_after or _EMBED_BACKFILL_RETRY_SECONDS
         except Exception:  # reason: one store's failure must not stop the others
             _logger.warning("embed backfill of %s failed", label, exc_info=True)
             return _EMBED_BACKFILL_RETRY_SECONDS
@@ -1066,8 +1080,8 @@ class ConnectedDataService:
             # count nothing. A terminal failure (a revoked credential) needs a
             # human, not a retry: surface it as needs_attention, notify once, and
             # back the source off the timer. Anything else is retried after a backoff.
-            if exc.code == SourceFailureCode.RATE_LIMITED.value:
-                await self._run_deferred(connection_id, exc.retry_after)
+            if exc.code in _DEFERRING_CODES:
+                await self._run_deferred(connection_id, exc.code, exc.retry_after)
             elif is_terminal_sync_failure(exc.code):
                 await self._mark_needs_attention(connection_id, exc.code or "auth_required")
                 self._timing.completed(connection_id, more_work=False)
@@ -1078,23 +1092,31 @@ class ConnectedDataService:
         else:
             self._timing.completed(connection_id, more_work=more_work)
 
-    async def _run_deferred(self, connection_id: str, retry_after: float | None) -> None:
-        """A rate-limited run: no strike, no traceback, next run when the provider said.
+    async def _run_deferred(
+        self, connection_id: str, code: str, retry_after: float | None
+    ) -> None:
+        """A deferred run: no strike, no traceback, next run when it was told to.
 
-        The coordinator kept every committed page and left the row ``idle`` with
-        ``rate_limited``. A provider that named no time waits one restart backoff.
+        Either the provider paced us (``rate_limited``) or the sync worker that
+        writes the store is restarting (``sync_worker_unavailable``). The
+        coordinator kept every committed page and left the row ``idle`` with the
+        code. With no time named, it waits one restart backoff.
         """
         delay = self._rate_limit_wait if retry_after is None else retry_after
         self._timing.deferred(connection_id, delay)
         self._statuses[connection_id] = self._still_described(
             connection_id,
             status="idle",
-            detail=SourceFailureCode.RATE_LIMITED.value,
+            detail=code,
             state=await self._persisted_state(connection_id),
         )
         await self._emit(
             "connected_data.sync.deferred",
-            {"source": _safe_id(connection_id), "retry_in_seconds": round(delay, 3)},
+            {
+                "source": _safe_id(connection_id),
+                "reason": code,
+                "retry_in_seconds": round(delay, 3),
+            },
         )
 
     async def _run_failed(
@@ -1240,6 +1262,8 @@ class ConnectedDataService:
         ingest = await candidate if inspect.isawaitable(candidate) else candidate
         try:
             lane = await self._lane_for(connection_id, raw_description, ingest)
+            if lane is None and self._lane_waits.get(connection_id) == _MAPPING_NOT_APPROVED:
+                lane = await self._lane_once_approved(connection_id, raw_description, ingest)
             if lane is None:
                 return await self._run_with_port(
                     registration, raw_description, ingest, key=self._agent_did
@@ -1329,6 +1353,9 @@ class ConnectedDataService:
             status="syncing",
             description=description,
         )
+        # The crawl starts now, so it answers every request made before this
+        # point, including one made while this run was still deciding its store.
+        self._timing.started(connection_id)
         coordinator = ConnectedDataCoordinator(
             registration.adapter,
             ingest,
@@ -1463,6 +1490,9 @@ class ConnectedDataService:
             )
         return settled
 
+    def _running_ids(self) -> frozenset[str]:
+        return frozenset(cid for cid, task in self._tasks.items() if not task.done())
+
     def _running_here(self, connection_id: str) -> bool:
         task = self._tasks.get(connection_id)
         return task is not None and not task.done()
@@ -1579,13 +1609,15 @@ class ConnectedDataService:
             description = await self._with_generation(raw_description, private)
             plan = await approved(description)
             reason = ""
-            if plan is None or set(plan.homes) != SHARED_HOMES:
+            if plan is None:
+                reason = _MAPPING_NOT_APPROVED
+            elif set(plan.homes) != SHARED_HOMES:
                 reason = "mapping_not_shared"
             elif await self._documents_indexed(private, description) > 0:
                 # The agent's own store still holds this connection: migrate it
                 # first, or every document would be read twice.
                 reason = _MIGRATION_PENDING
-            elif not shared.claim_profile(connection_id):
+            elif not await shared.claim_profile(connection_id, plan.mapping_id):
                 reason = "embedding_profile_differs"
             if plan is None or reason:
                 await self._stay_own(connection_id, raw_description, reason)
@@ -1597,6 +1629,26 @@ class ConnectedDataService:
                 "connected-data shared store undecided: %s", connection_id, exc_info=True
             )
             return self._lanes.get(connection_id)
+
+    async def _lane_once_approved(
+        self, connection_id: str, raw_description: SourceDescription, ingest: IngestPort
+    ) -> KnowledgeSubscription | None:
+        """Decide the lane again if the operator approved the mapping since it was decided.
+
+        The lane was decided before the mapping was approved, and the run's own
+        mapping check comes later. An approval landing in between used to send a
+        shareable connection's first crawl into the agent's own store. Asking for
+        the mapping here (it stages the default proposal when none is approved)
+        closes that window: approved now means decide again; still pending means
+        the run goes on and ends awaiting the mapping, as before.
+        """
+        try:
+            await ingest.require_approved_mapping(
+                await self._with_generation(raw_description, ingest)
+            )
+        except (MappingPendingError, MappingDeniedError):
+            return None
+        return await self._lane_for(connection_id, raw_description, ingest)
 
     async def _stay_own(
         self, connection_id: str, raw_description: SourceDescription, reason: str
@@ -1680,19 +1732,19 @@ class ConnectedDataService:
         try:
             if await (await shared.registry()).for_connection(connection_id):
                 return
-            reader = await shared.reader(connection_id)
+            orphan = await shared.orphan(connection_id)
             try:
-                described = await self._with_generation(description, reader)
+                described = await self._with_generation(description, orphan)
                 if not await self._store.purge(principal, connection_id):
                     await self._emit(
                         "connected_data.knowledge.purge_deferred",
                         {**audit, "reason": "sync_lease_active"},
                     )
                     return
-                await reader.purge_source(described)
+                await orphan.purge_source(described)
+                await orphan.drop_store()
             finally:
-                await _release(reader)
-            await asyncio.to_thread(shutil.rmtree, shared.root(connection_id), True)
+                await _release(orphan)
         except Exception as exc:  # reason: the agent's own revoke already took effect
             _logger.exception("connected-data shared store purge failed: %s", connection_id)
             await self._emit(
@@ -1953,7 +2005,7 @@ class ConnectedDataService:
         candidate = factory(raw)
         private = await candidate if inspect.isawaitable(candidate) else candidate
         try:
-            if not isinstance(private, ArcMemoryIngestAdapter):
+            if not isinstance(private, RemoteIngestPort):
                 return MigrationResult(connection_id, "refused", "migration_unsupported")
             description = await self._with_generation(raw, private)
             plan = await private.approved_mapping(description)
@@ -1976,7 +2028,7 @@ class ConnectedDataService:
                         target, private, description, dry_run=True
                     )
                     return MigrationResult(connection_id, "would_migrate", "", **counts)
-                if not shared.claim_profile(connection_id):
+                if not await shared.claim_profile(connection_id, plan.mapping_id):
                     return MigrationResult(connection_id, "refused", "embedding_profile_differs")
                 adopted = await self._adopt_under_lease(
                     connection_id, writer, target, private, description
@@ -2322,6 +2374,11 @@ _QUIET_MIGRATION_STATUSES = frozenset({"already_shared", "nothing_to_migrate", "
 class _SyncStalledError(RuntimeError):
     """A run outlived its time bound plus grace: it is stuck, not slow."""
 
+
+#: Runs that end deferred rather than failed: nothing is wrong with the source.
+_DEFERRING_CODES = frozenset(
+    {SourceFailureCode.RATE_LIMITED.value, SyncWorkerUnavailableError.code}
+)
 
 #: Source failures that pass on their own: the provider was down or pacing us.
 _TEMPORARY_SOURCE_CODES = frozenset({SourceFailureCode.TRANSIENT, SourceFailureCode.RATE_LIMITED})

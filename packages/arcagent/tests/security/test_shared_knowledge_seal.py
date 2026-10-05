@@ -24,8 +24,15 @@ from arcokf import DIGEST_NAME, INDEX_NAME, IndexEntry, render_folder_digest, re
 from arcstore.backends.memory import FakeBackend
 from arctrust import knowledge_signer_for, operator_key_for
 from arctrust.identity import AgentIdentity
+from arctrust.paths import connected_knowledge_dir
+from packages.arcagent.tests.sync_worker_fakes import approve_document_mapping, serve_from
 
-from arcagent.extension.knowledge_subscriptions import knowledge_principal, store_key
+from arcagent.extension.knowledge_subscriptions import (
+    KnowledgeSubscription,
+    KnowledgeSubscriptions,
+    knowledge_principal,
+    store_key,
+)
 from arcagent.extension.source import (
     SourceContent,
     SourceDataShape,
@@ -40,7 +47,29 @@ _B = "did:arc:test:agent-b"
 _UNSIGNED = "no agent signing key bound"
 
 
-def _shared(backend: FakeBackend, root: Path, agent_did: str) -> SharedKnowledge:
+@pytest.fixture(autouse=True)
+def _fleet_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ARC_TEAM_ROOT", str(tmp_path / "arc"))
+
+
+async def _served(backend: FakeBackend) -> FakeBackend:
+    """The sync worker writes the store; agent A subscribes under its approved mapping."""
+    serve_from(backend, _A, _B)
+    await approve_document_mapping(backend, _A, approval_id="approval-1")
+    for connection_id in ("wiki", "mail"):
+        await KnowledgeSubscriptions(backend, actor_did=_A).put(
+            KnowledgeSubscription(
+                agent_did=_A,
+                connection_id=connection_id,
+                source_id="pool",
+                approval_id="approval-1",
+                profile="lexical",
+            )
+        )
+    return backend
+
+
+def _shared(backend: FakeBackend, agent_did: str) -> SharedKnowledge:
     async def opener() -> FakeBackend:
         return backend
 
@@ -49,7 +78,7 @@ def _shared(backend: FakeBackend, root: Path, agent_did: str) -> SharedKnowledge
         arcstore_opener=opener,
         embedder=lambda: None,
         profile=lambda: "lexical",
-        root=lambda: root,
+        embed=lambda: None,
     )
 
 
@@ -65,7 +94,7 @@ def _source(connection_id: str = "wiki") -> SourceDescription:
 async def _ingest_one(shared: SharedKnowledge, connection_id: str = "wiki") -> None:
     """The real write path: a subscriber's port ingests one doc and finishes the run."""
     source = _source(connection_id)
-    writer = await shared.migration_writer(connection_id, "approval-1")
+    writer = await shared.writer(connection_id, "approval-1")
     try:
         await writer.ingest(
             source,
@@ -109,19 +138,20 @@ def operator_key() -> None:
 async def test_a_shared_writer_signs_the_index_and_another_agent_verifies_it(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    backend = FakeBackend()
-    writer_side = _shared(backend, tmp_path, _A)
+    backend = await _served(FakeBackend())
+    root = connected_knowledge_dir()
+    writer_side = _shared(backend, _A)
     caplog.set_level(logging.WARNING)
 
     await _ingest_one(writer_side)
     writer_side.close()
 
     assert _UNSIGNED not in caplog.text
-    collection = _collection(tmp_path)
+    collection = _collection(root)
     assert (collection / INDEX_NAME).is_file()
     assert knowledge_principal("wiki") in (collection / SEAL_NAME).read_text(encoding="utf-8")
 
-    reader_side = _shared(backend, tmp_path, _B)
+    reader_side = _shared(backend, _B)
     reader = await reader_side.reader("wiki")
     try:
         assert source_maintainer(collection).validate().valid
@@ -150,9 +180,9 @@ async def _forge_seal(store: Path, collection: Path, signer: object, tmp_path: P
 async def test_a_seal_not_signed_by_this_connections_principal_is_refused(
     tmp_path: Path, forger: str
 ) -> None:
-    backend = FakeBackend()
-    root = tmp_path / "shared"
-    await _ingest_one(_shared(backend, root, _A))
+    backend = await _served(FakeBackend())
+    root = connected_knowledge_dir()
+    await _ingest_one(_shared(backend, _A))
     collection = _collection(root)
     store = root / store_key("wiki")
     signer = (
@@ -165,7 +195,7 @@ async def test_a_seal_not_signed_by_this_connections_principal_is_refused(
 
     (collection / SEAL_NAME).write_bytes(forged)
 
-    reader_side = _shared(backend, root, _B)
+    reader_side = _shared(backend, _B)
     reader = await reader_side.reader("wiki")
     try:
         assert not source_maintainer(collection).validate().valid
@@ -177,10 +207,11 @@ async def test_a_seal_not_signed_by_this_connections_principal_is_refused(
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("operator_key")
 async def test_a_tampered_index_fails_verification(tmp_path: Path) -> None:
-    backend = FakeBackend()
-    await _ingest_one(_shared(backend, tmp_path, _A))
-    collection = _collection(tmp_path)
-    reader_side = _shared(backend, tmp_path, _B)
+    backend = await _served(FakeBackend())
+    root = connected_knowledge_dir()
+    await _ingest_one(_shared(backend, _A))
+    collection = _collection(root)
+    reader_side = _shared(backend, _B)
     reader = await reader_side.reader("wiki")
     try:
         assert source_maintainer(collection).validate().valid
@@ -202,10 +233,11 @@ async def test_a_tampered_index_fails_verification(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_without_a_custody_key_nothing_is_signed_or_trusted(tmp_path: Path) -> None:
-    backend = FakeBackend()
-    shared = _shared(backend, tmp_path, _A)
+    backend = await _served(FakeBackend())
+    root = connected_knowledge_dir()
+    shared = _shared(backend, _A)
 
     await _ingest_one(shared)  # no operator key: the sync still lands its documents
 
-    assert not list((tmp_path / store_key("wiki")).rglob(SEAL_NAME))
+    assert not list((root / store_key("wiki")).rglob(SEAL_NAME))
     shared.close()

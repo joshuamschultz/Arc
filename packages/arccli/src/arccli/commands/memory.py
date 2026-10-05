@@ -435,7 +435,8 @@ def _agent_embed_settings(agent_root: Path) -> tuple[str, str, str]:
 def _agent_profile(agent_root: Path) -> str:
     import arcagent
 
-    return str(arcagent.embed_profile_of(*_agent_embed_settings(agent_root)))
+    profile: str = arcagent.embedding_profile_of(*_agent_embed_settings(agent_root))
+    return profile
 
 
 def _render_backlog(store: Path) -> None:

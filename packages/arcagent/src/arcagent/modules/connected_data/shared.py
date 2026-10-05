@@ -13,7 +13,8 @@ through its own subscription.
   for any other DID is refused (ASI03).
 * **Who may write.** The store has no approval row of its own. A write is
   authorized by the writing subscriber's verified approval, re-checked against
-  its subscription before every object (:class:`SubscriberAuthority`).
+  its subscription before every object (checked in the sync worker, which
+  writes every store; this process only reads them).
 * **What is shared.** Only the DOCUMENT home: extracted text, its chunks and its
   vectors. Memory, profile, blob and datastore homes are an agent's own state
   (ADR-029); an agent whose mapping selects any of them keeps its own sync.
@@ -46,6 +47,13 @@ from arcagent.extension.knowledge_subscriptions import (
     store_key,
 )
 from arcagent.modules.connected_data.ingest import ArcMemoryIngestAdapter, ArcStoreObjectState
+from arcagent.modules.connected_data.sync_worker.remote_port import (
+    RemoteIngestPort,
+    WriterChannel,
+    seal_key_for,
+)
+from arcagent.modules.connected_data.sync_worker.specs import Authority, StoreSpec
+from arcagent.modules.connected_data.sync_worker.supervisor import process_supervisor
 
 _logger = logging.getLogger("arcagent.modules.connected_data.shared")
 
@@ -54,40 +62,9 @@ SHARED_HOMES = frozenset({KnowledgeHome.DOCUMENT})
 _PROFILE_FILE = ".embedding-profile"
 
 
-class SubscriberAuthority:
-    """A writer's delegated approval, valid only while its subscription stands.
-
-    Re-read before every write, so an agent whose grant was revoked mid-run stops
-    writing the shared store at the next object.
-    """
-
-    def __init__(
-        self,
-        registry: KnowledgeSubscriptions,
-        agent_did: str,
-        connection_id: str,
-        approval_id: str,
-    ) -> None:
-        self._registry = registry
-        self._agent_did = agent_did
-        self._connection_id = connection_id
-        self._approval_id = approval_id
-
-    async def authorized_homes(self) -> tuple[str, tuple[KnowledgeHome, ...]] | None:
-        current = await self._registry.get(self._agent_did, self._connection_id)
-        if current is None or current.approval_id != self._approval_id:
-            return None
-        return self._approval_id, tuple(SHARED_HOMES)
-
-
-class _VerifiedNow:
-    """A migrating agent's own approval, verified moments before it subscribes."""
-
-    def __init__(self, approval_id: str) -> None:
-        self._approval_id = approval_id
-
-    async def authorized_homes(self) -> tuple[str, tuple[KnowledgeHome, ...]] | None:
-        return self._approval_id, tuple(SHARED_HOMES)
+def default_channel() -> WriterChannel:
+    """This process's supervised sync worker."""
+    return process_supervisor().channel()
 
 
 class _ReadOnly:
@@ -98,7 +75,12 @@ class _ReadOnly:
 
 
 class SharedKnowledge:
-    """Ports onto the fleet's connection-scoped stores, for one agent."""
+    """Ports onto the fleet's connection-scoped stores, for one agent.
+
+    A port reads its store here, read-only, and writes it through the sync
+    worker (``sync_worker.RemoteIngestPort``): this process never opens a write
+    connection to a shared store.
+    """
 
     def __init__(
         self,
@@ -107,8 +89,9 @@ class SharedKnowledge:
         arcstore_opener: Callable[[], Awaitable[Any]],
         embedder: Callable[[], Any | None],
         profile: Callable[[], str],
+        embed: Callable[[], tuple[str, str, str] | None],
+        channel: Callable[[], WriterChannel] = default_channel,
         audit_sink: Any | None = None,
-        root: Callable[[], Path] = connected_knowledge_dir,
     ) -> None:
         self.agent_did = agent_did
         self._arcstore_opener = arcstore_opener
@@ -118,14 +101,15 @@ class SharedKnowledge:
         self._embedder: Any | None = None
         self._embedder_built = False
         self._profile = profile
+        self._embed = embed
+        self._channel = channel
         self._audit_sink = audit_sink
-        self._root = root
         #: The release of each store root's pinned seal key, per root this agent opened.
         self._held: dict[Path, Callable[[], None]] = {}
 
     def root(self, connection_id: str) -> Path:
         """Where one connection's shared store lives (resolved per call)."""
-        return self._root() / store_key(connection_id)
+        return connected_knowledge_dir() / store_key(connection_id)
 
     def profile(self) -> str:
         return self._profile()
@@ -133,26 +117,54 @@ class SharedKnowledge:
     async def registry(self) -> KnowledgeSubscriptions:
         return KnowledgeSubscriptions(await self._arcstore_opener(), actor_did=self.agent_did)
 
-    async def writer(self, connection_id: str, approval_id: str) -> ArcMemoryIngestAdapter:
-        """A port that writes the store under this agent's verified approval."""
-        registry = await self.registry()
-        authority = SubscriberAuthority(registry, self.agent_did, connection_id, approval_id)
-        return await self._port(connection_id, authority)
+    async def writer(self, connection_id: str, approval_id: str) -> RemoteIngestPort:
+        """A port that writes the store under this agent's live subscription."""
+        return await self._remote(connection_id, "subscriber", approval_id)
 
-    async def migration_writer(
-        self, connection_id: str, approval_id: str
-    ) -> ArcMemoryIngestAdapter:
+    async def migration_writer(self, connection_id: str, approval_id: str) -> RemoteIngestPort:
         """A port that adopts this agent's own store under the approval it just verified.
 
         Used before the agent subscribes, so the store is whole before it is read.
         """
-        return await self._port(connection_id, _VerifiedNow(approval_id))
+        return await self._remote(connection_id, "migration", approval_id)
+
+    async def orphan(self, connection_id: str) -> RemoteIngestPort:
+        """A port that can only purge a store no agent reads any more."""
+        return await self._remote(connection_id, "orphan", "")
 
     async def reader(self, connection_id: str) -> ArcMemoryIngestAdapter:
         """A port that reads the store and can write nothing."""
-        return await self._port(connection_id, _ReadOnly())
+        return await self._local(connection_id, _ReadOnly())
 
-    async def _port(self, connection_id: str, authority: Any) -> ArcMemoryIngestAdapter:
+    async def claim_profile(self, connection_id: str, approval_id: str) -> bool:
+        """True when this agent embeds the way the store was (or is now first) embedded.
+
+        The first claim writes the store's marker (in the worker) exclusively, so
+        two first writers cannot both win; every later claim compares.
+        """
+        port = await self._remote(connection_id, "migration", approval_id)
+        try:
+            return await port.claim_profile(self._profile())
+        finally:
+            await port.aclose()
+
+    async def _remote(
+        self, connection_id: str, authority: Authority, approval_id: str
+    ) -> RemoteIngestPort:
+        local = await self._local(connection_id, _ReadOnly())
+        spec = StoreSpec(
+            kind="shared",
+            agent_did=self.agent_did,
+            root=str(self.root(connection_id)),
+            authority=authority,
+            connection_id=connection_id,
+            approval_id=approval_id,
+            seal=seal_key_for(self.root(connection_id)),
+            embed=self._embed(),
+        )
+        return RemoteIngestPort(local, spec, self._channel(), audit_sink=self._audit_sink)
+
+    async def _local(self, connection_id: str, authority: Any) -> ArcMemoryIngestAdapter:
         principal = knowledge_principal(connection_id)
         await self._hold_seal_key(connection_id, principal)
         return ArcMemoryIngestAdapter(
@@ -163,16 +175,15 @@ class SharedKnowledge:
             embedder=self._embedder_once(),
             audit_sink=self._audit_sink,
             authority=authority,
-            # The store is rebuildable from the provider: skip the per-commit fsync.
             durability="normal",
+            read_only=True,
         )
 
     async def _hold_seal_key(self, connection_id: str, principal: str) -> None:
         """Pin the store principal's key for the store root (once per root per agent).
 
-        Held for as long as this agent has the store open, not per port: the
-        store's folder listings are re-indexed by a debounced drain that runs
-        after a sync's port has closed, and it must still be able to sign.
+        Readers verify the store's seal with it, and the sync worker's writes are
+        signed with it here, by request: the key never leaves this process.
         """
         root = self.root(connection_id).resolve()
         if root in self._held:
@@ -208,32 +219,32 @@ class SharedKnowledge:
         except OSError:
             return False
 
-    def claim_profile(self, connection_id: str) -> bool:
-        """True when this agent embeds the way the store was (or is now first) embedded.
 
-        The first claim creates the marker exclusively, so two first writers on one
-        host cannot both win; every later claim compares.
-        """
-        root = self.root(connection_id)
-        marker = root / _PROFILE_FILE
-        mine = self._profile()
+def claim_store_profile(root: Path, profile: str) -> bool:
+    """Claim a shared store's embedding profile, or compare against the claim made.
+
+    Runs in the sync worker, the store's only writer. The marker is created
+    exclusively, so two first writers on one host cannot both win.
+    """
+    marker = root / _PROFILE_FILE
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        with marker.open("x", encoding="utf-8") as handle:
+            handle.write(profile)
+        return True
+    except FileExistsError:
         try:
-            root.mkdir(parents=True, exist_ok=True)
-            with marker.open("x", encoding="utf-8") as handle:
-                handle.write(mine)
-            return True
-        except FileExistsError:
-            try:
-                return marker.read_text(encoding="utf-8").strip() == mine
-            except OSError:
-                return False
+            return marker.read_text(encoding="utf-8").strip() == profile
         except OSError:
-            _logger.warning("shared knowledge store unwritable: %s", root)
             return False
+    except OSError:
+        _logger.warning("shared knowledge store unwritable: %s", root)
+        return False
 
 
 __all__ = [
     "SHARED_HOMES",
     "SharedKnowledge",
-    "SubscriberAuthority",
+    "claim_store_profile",
+    "default_channel",
 ]
