@@ -292,6 +292,23 @@ class TestCompaction:
 
 
 class TestCleanupOldSessions:
+    async def test_cleanup_prunes_tool_output_spills_by_the_same_count(
+        self, tmp_path: Path
+    ) -> None:
+        import os
+
+        spill_root = tmp_path / "runs" / "spill"
+        for i in range(4):
+            run_dir = spill_root / f"run-{i}"
+            run_dir.mkdir(parents=True)
+            (run_dir / "spill_x").write_text("saved output")
+            os.utime(run_dir, (1000 + i, 1000 + i))
+
+        sm = _make_session_manager(tmp_path, retention_count=2)
+        await sm.cleanup_old_sessions()
+
+        assert sorted(p.name for p in spill_root.iterdir()) == ["run-2", "run-3"]
+
     async def test_cleanup_by_count(self, tmp_path: Path) -> None:
         sessions_dir = tmp_path / "sessions"
         sessions_dir.mkdir(parents=True)

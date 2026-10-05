@@ -291,6 +291,12 @@ class EventBus:
         # it is always kept — never gated behind raw-body capture.
         if isinstance(data.get("tool_extra"), dict):
             extra.update(data["tool_extra"])
+        # A spilled result's size and handle are pointers, not a body: the trace
+        # shows the full output was saved, never what it said.
+        if data.get("spilled"):
+            extra["spilled"] = True
+            extra["spill_tokens"] = data["spill_tokens"]
+            extra["spill_handle"] = data["spill_handle"]
         # The failure's class and its already-redacted, size-capped message are
         # diagnosis signal, not a body: an audit row that says only "error" is
         # useless. Never gated behind raw capture.

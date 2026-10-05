@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+from dataclasses import replace
 from typing import Any
 
 from arcrun.events import EventBus
 from arcrun.types import SandboxConfig
+
+
+def with_run_tools(config: SandboxConfig | None, names: Collection[str]) -> SandboxConfig | None:
+    """Add run-owned tools to an operator allowlist so the run can reach its own output.
+
+    The loop adds tools of its own (reading back a saved tool result). An operator
+    allowlist names only the tools the operator knows about; without this a
+    restricted run would be handed a handle it is then forbidden to read, which
+    turns a lossless spill into a lossy one. Only the allowlist grows: the
+    ``check`` callback and every other limit still apply to these tools.
+    """
+    if config is None or config.allowed_tools is None:
+        return config
+    return replace(config, allowed_tools=[*config.allowed_tools, *names])
 
 
 class Sandbox:

@@ -171,9 +171,10 @@ raise** above what a manifest permits.
 `allowed_strategies` (list | None, `None`; federal floors to `["react"]`) ·
 `approval_opt_in` (list, `[]`) · `strategy_model` (str, `""` = the agent's
 model; the model that picks each turn's strategy) · `strategy_timeout_seconds`
-(float > 0, `3.0`; past it the turn uses react) · `max_tool_result_tokens`
-(int > 0 | None, `8000`; a longer tool result keeps its head plus a re-read
-marker)
+(float > 0, `3.0`; past it the turn uses react) · `tool_result_spill_tokens`
+(int > 0 | None, `20000`; a longer tool result is saved whole in the run's
+workspace spill store, the model sees its head plus a handle for
+`read_tool_output` / `search_tool_output`; nothing is cut)
 
 **`[arcrun.sandbox]`** — `config.py:630` — `allowed_tools` (list | None, `None`
 = all tools)

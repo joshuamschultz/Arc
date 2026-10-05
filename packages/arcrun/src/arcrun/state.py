@@ -21,6 +21,7 @@ from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.ledger import ToolExecutionLedger
 from arcrun.registry import ToolRegistry
+from arcrun.spill import SpillStore
 from arcrun.types import ToolOutcomeUnknown
 
 #: How much of a held message's text rides its ``message.injected`` audit event.
@@ -165,9 +166,11 @@ class RunState:
     # cascade trip.
     max_repeat: int | None = None
     max_consecutive_errors: int | None = None
-    # Cap on one tool result's text, in estimated tokens (4 chars per token).
-    # ``None`` disables the cap; over it the model sees the head plus a marker.
-    max_tool_result_tokens: int | None = 8000
+    # A tool result over this many estimated tokens is saved whole to ``spill``
+    # and the model sees its head plus a handle to read the rest (SPEC-070:
+    # restorable, never lossy). ``None`` or no ``spill`` store = result passes whole.
+    tool_result_spill_tokens: int | None = 20_000
+    spill: SpillStore | None = None
     # Breaker running state (REQ-020/021/025). ``runaway_signature`` is the last
     # single-call signature seen; ``runaway_count`` its consecutive-turn streak
     # (a distinct-signature batch resets it — that is progress, REQ-025).

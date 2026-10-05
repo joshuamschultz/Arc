@@ -389,6 +389,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arctrust/tests/test_deployment_grant.py",
         "packages/arcui/tests/test_health.py",
     ),
+    "saved tool output read across runs, forged or rewritten handles (SPEC-070)": (
+        "packages/arcrun/tests/security/test_tool_output_spill_scope.py",
+    ),
     "browser leaving kills a long run, or an unwatched run never ends (DGX 2026-10-03)": (
         # The last socket leaving past every grace window never cancels the run; its
         # answer lands in session history; a run with no observer is still capped by

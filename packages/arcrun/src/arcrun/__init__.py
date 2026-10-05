@@ -97,6 +97,7 @@ from arcrun.model import (
 )
 from arcrun.parallel_dispatch import dispatch_ready
 from arcrun.registry import ToolRegistry
+from arcrun.spill import prune_spills
 from arcrun.strategies import Strategy, StrategyChoice, available_strategies, choose_strategy
 from arcrun.streams import (
     RunResult,
@@ -221,6 +222,7 @@ __all__ = [
     "model_provider_keys",
     "platform_supports_vm",
     "provider_tools",
+    "prune_spills",
     "queue_run_context",
     "resolve_execution_backend",
     "run",

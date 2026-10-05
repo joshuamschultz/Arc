@@ -28,7 +28,7 @@ from arcprompt import PromptSource, StockPromptSource
 
 from arcagent.core.config import ContextConfig, SessionConfig
 from arcagent.core.session_internal.context import TURN_CONTEXT_KEY
-from arcagent.utils.io import format_messages
+from arcagent.utils.io import format_messages, run_home
 from arcagent.utils.sanitizer import sanitize_text
 
 if TYPE_CHECKING:
@@ -566,8 +566,11 @@ class SessionManager:
     async def cleanup_old_sessions(self) -> None:
         """Remove sessions beyond retention limits.
 
-        Keeps the newest N sessions (by modification time).
+        Keeps the newest N sessions (by modification time). Tool outputs a run
+        saved whole follow the same rule, so a saved output does not outlive the
+        sessions whose history could still point at it.
         """
+        arcrun.prune_spills(run_home(self._workspace), self._config.retention_count)
         if not self._sessions_dir.exists():
             return
 

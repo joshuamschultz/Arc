@@ -20,7 +20,8 @@ from arcrun.dynamic.seal import RunSeal
 from arcrun.events import EventBus
 from arcrun.ledger import ToolExecutionLedger
 from arcrun.registry import ToolRegistry
-from arcrun.sandbox import Sandbox
+from arcrun.sandbox import Sandbox, with_run_tools
+from arcrun.spill import SPILL_TOOLS, SpillStore, spill_tools
 from arcrun.state import Injection, RunDeadlineExceededError, RunState, RunWorkCancelledError
 from arcrun.strategies import (
     STRATEGIES,
@@ -65,7 +66,7 @@ def _build_state(
     max_parallel: int = 10,
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
-    max_tool_result_tokens: int | None = 8000,
+    tool_result_spill_tokens: int | None = 20_000,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
     work_dir: Path | None = None,
@@ -91,6 +92,18 @@ def _build_state(
     tools = provider_tools(capabilities, caller_did=actor_did or _DEFAULT_CALLER_DID)
     if not tools:
         raise ValueError("capabilities must advertise at least one capability")
+    # A run with a durable home can save an over-large tool result whole instead
+    # of cutting it, so it carries the two read-only tools that bring it back.
+    # They join the tool set before the freeze: the set stays byte-stable for the
+    # provider cache, and the tools only ever see this run's own handles.
+    spill = (
+        SpillStore(work_dir, run_id)
+        if work_dir is not None and tool_result_spill_tokens is not None
+        else None
+    )
+    if spill is not None:
+        tools = [*tools, *spill_tools(spill)]
+        sandbox = with_run_tools(sandbox, SPILL_TOOLS)
     registry = ToolRegistry(tools=tools, event_bus=bus)
     # Seal the tool set for the whole run: byte-stable list keeps the provider
     # cache prefix valid and closes the mid-run tool-injection surface.
@@ -124,7 +137,8 @@ def _build_state(
         max_parallel=max_parallel,
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
-        max_tool_result_tokens=max_tool_result_tokens,
+        tool_result_spill_tokens=tool_result_spill_tokens,
+        spill=spill,
         stream_event=stream_event,
         deadline=deadline,
         tool_ledger=tool_ledger,
@@ -182,7 +196,7 @@ async def run(
     max_parallel: int = 10,
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
-    max_tool_result_tokens: int | None = 8000,
+    tool_result_spill_tokens: int | None = 20_000,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
     work_dir: Path | None = None,
@@ -232,7 +246,7 @@ async def run(
         max_parallel=max_parallel,
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
-        max_tool_result_tokens=max_tool_result_tokens,
+        tool_result_spill_tokens=tool_result_spill_tokens,
         resume_from=resume_from,
         run_id=run_id,
         work_dir=work_dir,
@@ -360,7 +374,7 @@ async def run_async(
     max_parallel: int = 10,
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
-    max_tool_result_tokens: int | None = 8000,
+    tool_result_spill_tokens: int | None = 20_000,
     resume_from: LoopCheckpoint | None = None,
     run_id: str | None = None,
     work_dir: Path | None = None,
@@ -395,7 +409,7 @@ async def run_async(
         max_parallel=max_parallel,
         max_repeat=max_repeat,
         max_consecutive_errors=max_consecutive_errors,
-        max_tool_result_tokens=max_tool_result_tokens,
+        tool_result_spill_tokens=tool_result_spill_tokens,
         resume_from=resume_from,
         run_id=run_id,
         work_dir=work_dir,

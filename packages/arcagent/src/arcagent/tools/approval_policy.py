@@ -32,6 +32,7 @@ from arctrust.signer import Signer, verify_signature
 from arcagent.tools._transport import RegisteredTool
 from arcagent.tools.checkpoint_signing import sign_record
 from arcagent.tools.human_gate import HumanGate
+from arcagent.utils.io import run_home
 
 if TYPE_CHECKING:
     from arcagent.core.agent import ArcAgent
@@ -211,13 +212,13 @@ def build_loop_controls(agent: ArcAgent, session: SessionManager) -> dict[str, A
         # brain stays home wherever the tools happen to be pointed (ADR-029).
         # arcrun never invents this path; without it a paused script simply
         # cannot resume after a restart.
-        "work_dir": agent._workspace / "runs",
+        "work_dir": run_home(agent._workspace),
         # Operator signatures over those artifacts, kept outside the workspace.
         "seal": build_run_seal(agent),
         # Loop mechanics (arcrun.toml). Behaviour-preserving defaults: max_turns=25,
         # tool_timeout=None, allowed_strategies=None, sandbox=None (full-allow).
         "max_turns": run_cfg.max_turns,
-        "max_tool_result_tokens": run_cfg.max_tool_result_tokens,
+        "tool_result_spill_tokens": run_cfg.tool_result_spill_tokens,
         "tool_timeout": run_cfg.tool_timeout,
         "allowed_strategies": resolve_allowed_strategies(run_cfg.allowed_strategies, sec.tier),
         "sandbox": sandbox,

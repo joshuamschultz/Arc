@@ -45,6 +45,8 @@ const TOOL_DESCRIPTIONS: Record<string, string> = {
   web_extract: 'Read a web page',
   send_message: 'Sent a message',
   notify_user: 'Notified the operator',
+  read_tool_output: 'Read part of a saved tool result',
+  search_tool_output: 'Searched a saved tool result',
 }
 
 const EVENT_DESCRIPTIONS: Record<string, string> = {
@@ -101,7 +103,8 @@ export function describeAction(item: Item): { title: string; description: string
   const key = item.name.toLowerCase()
   const base = TOOL_DESCRIPTIONS[key] ?? `Ran the ${item.name} tool`
   const via = item.activatedSkill ? ` · used skill "${item.activatedSkill}"` : ''
-  return { title: prettifyName(item.name), description: base + via }
+  const saved = item.spilledTokens ? ` · saved full output (${item.spilledTokens} tokens)` : ''
+  return { title: prettifyName(item.name), description: base + via + saved }
 }
 
 // A tool call pairs its start (carrying input) with its end/error (carrying
@@ -118,6 +121,9 @@ export interface ToolItem {
   implicit?: boolean
   activatedSkill?: string | null
   skillActivated?: boolean
+  // Set when the result was too large to show and was saved whole instead; the
+  // model reads it back in pieces. Size is in estimated tokens.
+  spilledTokens?: number | null
   requestId?: string | null
 }
 export interface LlmItem {
@@ -299,12 +305,14 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
         const status = e.outcome === 'error' || e.phase === 'error' ? 'error' : 'ok'
         const activatedSkill = (e.extra?.activated_skill as string | undefined) ?? null
         const skillActivated = e.extra?.skill_activated as boolean | undefined
+        const spilledTokens = e.extra?.spilled === true ? Number(e.extra.spill_tokens) : null
         if (target) {
           target.output = out
           target.status = status
           target.latency_ms = e.latency_ms
           target.activatedSkill = activatedSkill
           target.skillActivated = skillActivated
+          target.spilledTokens = spilledTokens
         } else {
           items.push({
             kind: 'tool',
@@ -318,6 +326,7 @@ export function mergeTimeline(entries: TimelineEntry[], runIsLive: boolean): Ite
             implicit: e.extra?.implicit === true,
             activatedSkill,
             skillActivated,
+            spilledTokens,
             requestId: e.request_id,
           })
         }

@@ -21,6 +21,15 @@ CHARS_PER_TOKEN = 4
 _FTS5_SPECIAL_RE = re.compile(r'[*"{}^():\[\]]')
 
 
+def run_home(workspace: Path) -> Path:
+    """The agent's durable home for run-scoped artifacts (ADR-029).
+
+    One resolver for the path: the run loop writes here and session retention
+    prunes here, so neither can drift from the other.
+    """
+    return workspace / "runs"
+
+
 def atomic_write_text(path: Path, content: str) -> None:
     """Write *content* to *path* atomically via tmp + rename.
 

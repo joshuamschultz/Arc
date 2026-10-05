@@ -125,6 +125,38 @@ async def test_tool_extra_annotation_always_spooled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_spilled_result_spools_size_and_handle_never_the_body(tmp_path) -> None:
+    """The trace says the full output was saved and where, not what it said."""
+    from arcrun._messages import user_message
+    from arcrun.spill import SpillStore
+
+    async def _huge(params: dict, ctx: object) -> str:
+        return "TOP-SECRET-BODY " * 10_000
+
+    bus = _bus()
+    state = RunState(
+        messages=[user_message("go")],
+        registry=ToolRegistry(tools=[_tool("huge", _huge)], event_bus=bus),
+        event_bus=bus,
+        run_id="run-x",
+        spill=SpillStore(tmp_path, "run-x"),
+    )
+    recorded: list = []
+    with patch.object(events_mod, "_spool_record", recorded.append):
+        await execute_tool_call(
+            ToolCall(id="tc1", name="huge", arguments={}),
+            state,
+            Sandbox(config=None, event_bus=bus),
+        )
+
+    end = next(r for r in recorded if r.kind == "tool_event" and r.phase == "end")
+    assert end.extra["spilled"] is True
+    assert end.extra["spill_tokens"] == 40_000
+    assert end.extra["spill_handle"].startswith("spill_")
+    assert "TOP-SECRET-BODY" not in str(end.extra)
+
+
+@pytest.mark.asyncio
 async def test_tool_error_spooled() -> None:
     """Task 2.3 — a raising tool spools phase=error, outcome=error."""
     recorded = await _run_tool(_bus(), _tool("bomb", _explode), {"input": "x"})

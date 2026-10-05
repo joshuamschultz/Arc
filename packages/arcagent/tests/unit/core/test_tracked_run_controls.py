@@ -161,6 +161,9 @@ class TestTrackedPathAppliesLoopControls:
         # the brain stays home wherever the tools are pointed (ADR-029).
         assert captured["work_dir"] is not None
         assert workspace in captured["work_dir"].parents or captured["work_dir"] == workspace
+        # Over-large tool results spill whole into that home (never cut), at the
+        # configured threshold.
+        assert captured["tool_result_spill_tokens"] == 20_000
 
     @pytest.mark.asyncio
     async def test_matches_build_loop_controls_uniformity(

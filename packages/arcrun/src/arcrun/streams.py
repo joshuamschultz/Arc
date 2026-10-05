@@ -204,7 +204,7 @@ async def run_stream(
     max_parallel: int = 10,
     max_repeat: int | None = None,
     max_consecutive_errors: int | None = None,
-    max_tool_result_tokens: int | None = 8000,
+    tool_result_spill_tokens: int | None = 20_000,
     resume_from: Any | None = None,
     run_id: str | None = None,
     work_dir: Path | None = None,
@@ -255,8 +255,13 @@ async def run_stream(
         max_cost_usd: Optional per-run cost ceiling forwarded likewise
             (best-effort secondary — priced, non-streaming responses only).
         work_dir: Optional durable home for run-scoped artifacts (the dynamic
-            strategy's replay journal and script scratch). arcrun never invents
-            this path; when None nothing is persisted.
+            strategy's replay journal and script scratch, and tool results saved
+            whole under ``tool_result_spill_tokens``). arcrun never invents
+            this path; when None nothing is persisted and tool results pass whole.
+        tool_result_spill_tokens: A tool result over this many estimated tokens
+            is saved to the run's spill store; the model sees its head plus a
+            handle for ``read_tool_output`` / ``search_tool_output``. Nothing is
+            cut. None disables spilling.
         run_id: Optional caller-pinned run id. When set it is used for both the
             stream audit and the loop's EventBus/spool, so a caller can link the
             run to durable state before it starts; otherwise one is generated.
@@ -399,7 +404,7 @@ async def run_stream(
                 max_parallel=max_parallel,
                 max_repeat=max_repeat,
                 max_consecutive_errors=max_consecutive_errors,
-                max_tool_result_tokens=max_tool_result_tokens,
+                tool_result_spill_tokens=tool_result_spill_tokens,
                 resume_from=resume_from,
                 run_id=run_id,
                 work_dir=work_dir,

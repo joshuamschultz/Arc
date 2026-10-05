@@ -770,13 +770,15 @@ class ArcRunConfig(BaseModel):
         gt=0,
         description="Wall-clock cap on the strategy selection call; past it the turn uses react.",
     )
-    max_tool_result_tokens: int | None = Field(
-        default=8000,
+    tool_result_spill_tokens: int | None = Field(
+        default=20_000,
         gt=0,
         description=(
-            "Largest tool result the model sees, in estimated tokens. A longer "
-            "result keeps its head and ends with a marker telling the model how "
-            "much was cut and to re-call the tool more narrowly. None = no cap."
+            "A tool result over this many estimated tokens is saved whole in the "
+            "run's own workspace spill store. The model sees its first ~2000 tokens "
+            "and a handle, and reads the rest with read_tool_output or "
+            "search_tool_output. Nothing is cut. None = results always enter the "
+            "context whole."
         ),
     )
     tool_timeout: float | None = Field(

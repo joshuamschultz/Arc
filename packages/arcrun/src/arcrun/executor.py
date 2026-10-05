@@ -21,6 +21,7 @@ from arcrun.ledger import (
     tool_invocation_key,
 )
 from arcrun.sandbox import Sandbox
+from arcrun.spill import SPILL_TOOLS, SpillRecord, estimate_tokens, head_with_marker
 from arcrun.state import RunState
 from arcrun.types import ParentRunContext, ToolContext, ToolOutcomeUnknown
 
@@ -87,24 +88,20 @@ def _mark_outcome_unknown(
     )
 
 
-_CHARS_PER_TOKEN = 4
+def _spill_if_large(result: str, state: RunState, tool_name: str) -> tuple[str, SpillRecord | None]:
+    """Save an over-threshold result whole and return the head the model sees.
 
-
-def _cap_result(result: str, cap: int | None, tool_name: str) -> tuple[str, int | None]:
-    """Cut ``result`` to ``cap`` estimated tokens, ending in a re-read marker.
-
-    Returns the text the model sees and the original token count when it was
-    cut (``None`` when untouched).
+    Nothing is cut: the full text goes to the run's spill store and stays
+    readable through ``read_tool_output``. The read tools' own output is exempt,
+    since re-spilling it would hide the very text the model asked to read.
     """
-    total = -(-len(result) // _CHARS_PER_TOKEN)
-    if cap is None or total <= cap:
+    threshold = state.tool_result_spill_tokens
+    if state.spill is None or threshold is None or tool_name in SPILL_TOOLS:
         return result, None
-    marker = (
-        f"[truncated: {total - cap} tokens omitted of {total} total. "
-        f"Call {tool_name} again with a narrower request "
-        "(e.g. offset/limit or a more specific query) to read more.]"
-    )
-    return f"{result[: cap * _CHARS_PER_TOKEN]}\n{marker}", total
+    if estimate_tokens(result) <= threshold:
+        return result, None
+    record = state.spill.spill(result)
+    return head_with_marker(result, record), record
 
 
 async def execute_tool_call(
@@ -277,17 +274,20 @@ async def _execute_tool_call(
                     "invocation_key": invocation_key,
                 },
             )
-            bus.emit(
-                "tool.end",
-                {
-                    "name": tc.name,
-                    "tool_call_id": tc.id,
-                    "turn_number": turn_number,
-                    "replayed": True,
-                },
-            )
+            visible, spilled = _spill_if_large(entry.outcome.content, state, tc.name)
+            replay_end: dict[str, Any] = {
+                "name": tc.name,
+                "tool_call_id": tc.id,
+                "turn_number": turn_number,
+                "replayed": True,
+            }
+            if spilled is not None:
+                replay_end.update(
+                    spilled=True, spill_tokens=spilled.tokens, spill_handle=spilled.handle
+                )
+            bus.emit("tool.end", replay_end)
             state.tool_calls_made += 1
-            return tool_result(tc.id, entry.outcome.content), entry.outcome.success
+            return tool_result(tc.id, visible), entry.outcome.success
         if entry.status != "new":
             bus.emit(
                 "tool.reconciliation_required",
@@ -410,11 +410,11 @@ async def _execute_tool_call(
     # dict the spool always keeps (it is signal, not a body).
     if ctx.tool_extra:
         end_data["tool_extra"] = dict(ctx.tool_extra)
-    visible, original_tokens = _cap_result(result, state.max_tool_result_tokens, tc.name)
-    if original_tokens is not None:
-        end_data["truncated"] = True
-        end_data["original_tokens"] = original_tokens
-        end_data["original_length"] = len(result)
+    visible, spilled = _spill_if_large(result, state, tc.name)
+    if spilled is not None:
+        end_data["spilled"] = True
+        end_data["spill_tokens"] = spilled.tokens
+        end_data["spill_handle"] = spilled.handle
     bus.emit("tool.end", end_data)
 
     state.tool_calls_made += 1
