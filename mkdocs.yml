@@ -176,6 +176,7 @@ nav:
           - Connections and connected data: runbooks/operate/connections.md
           - Connector credentials: runbooks/operate/connector-credentials.md
           - Vault Transit custody: runbooks/operate/vault-transit.md
+          - OpenBao account authority: runbooks/operate/openbao-accounts.md
           - Google accounts: runbooks/operate/google-accounts.md
           - Atlassian and GitHub: runbooks/operate/atlassian-and-github.md
           - Agent config drift: runbooks/operate/agent-config-drift.md

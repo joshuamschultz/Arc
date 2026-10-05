@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import sys
 from collections.abc import Callable
@@ -34,6 +35,8 @@ _VALID_LAYERS = ("llm", "run", "agent", "team")
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+_logger = logging.getLogger(__name__)
 
 
 def _configure_logging(*, verbose: bool) -> None:
@@ -300,6 +303,7 @@ def _start(args: argparse.Namespace) -> None:
 
     anchor_audit = _AppAuditSink()
     app = create_app(
+        user_store_factory=_account_store_factory(anchor_audit),
         auth_config=auth,
         max_agents=max_agents,
         team_root=team_root,
@@ -450,6 +454,21 @@ def _start(args: argparse.Namespace) -> None:
             set_current_fleet(None)
 
 
+def _account_store_factory(audit_sink: Any) -> Any:
+    """The Vault-backed account store factory, or None (People answers 503).
+
+    A broken ``[security.accounts]`` block is logged loudly and leaves the
+    dashboard up on its bearer tokens; it never falls back to a local user file.
+    """
+    from arccli.commands._accounts import AccountsConfigError, build_user_store_factory
+
+    try:
+        return build_user_store_factory(audit_sink)
+    except AccountsConfigError as exc:
+        _logger.error("accounts: %s; people management is unavailable", exc)
+        return None
+
+
 class _AppAuditSink:
     """Audit sink for components built before the app: forwards to its WORM chain.
 
@@ -466,6 +485,13 @@ class _AppAuditSink:
         worm = getattr(getattr(self.app, "state", None), "audit_worm", None)
         if worm is not None:
             worm.sink.write(event)
+
+    def write_durable(self, event: Any) -> None:
+        """Account mutations are refused when the chain cannot take the record."""
+        worm = getattr(getattr(self.app, "state", None), "audit_worm", None)
+        if worm is None:
+            raise RuntimeError("operator audit chain is unavailable")
+        worm.sink.write_durable(event)
 
 
 def _deployment_tier(gateway_config: Any | None) -> str:

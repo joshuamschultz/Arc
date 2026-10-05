@@ -15,20 +15,51 @@ from __future__ import annotations
 import argparse
 import getpass
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NoReturn
 
 from arccli.formatting import print_table
 
 
-def _store(args: argparse.Namespace):  # type: ignore[no-untyped-def]  # reason: optional injected authority
-    from arctrust.users import default_users_path
-
+def _store(args: argparse.Namespace):  # type: ignore[no-untyped-def]  # reason: UserStore from an optional authority
     factory = getattr(args, "user_store_factory", None)
     if factory is None:
-        _fail("account authority is unavailable; configure a Vault-backed user store")
-    path = getattr(args, "file", None)
-    return factory(Path(path).expanduser() if path else default_users_path())
+        _fail(
+            "account authority is unavailable; configure [security.accounts] "
+            "(see docs/runbooks/operate/openbao-accounts.md)"
+        )
+    return factory()
+
+
+@contextmanager
+def _account_authority(args: argparse.Namespace) -> Iterator[None]:
+    """Bind the Vault-backed store factory to *args* for one command.
+
+    The operator chain is held open for the command (it is the strict audit sink
+    every account mutation must append to) and closed on exit.
+    """
+    from arcstore import resolve_data_dir
+
+    from arccli.commands._accounts import AccountsConfigError, build_user_store_factory
+    from arccli.commands.operator import operator_worm_sink
+
+    try:
+        sink = operator_worm_sink(None, resolve_data_dir(None))
+    except (OSError, RuntimeError, ValueError) as exc:
+        _fail(f"audit chain unavailable ({type(exc).__name__}); accounts need durable audit")
+    try:
+        path = getattr(args, "file", None)
+        try:
+            args.user_store_factory = build_user_store_factory(
+                sink, users_path=Path(path).expanduser() if path else None
+            )
+        except AccountsConfigError as exc:
+            _fail(str(exc))
+        yield
+    finally:
+        sink.close()
 
 
 def _read_password(args: argparse.Namespace, *, confirm: bool = True) -> str:
@@ -215,7 +246,9 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="arc user", description="Accounts that can sign in to this deployment."
     )
     parser.add_argument(
-        "--file", default=None, help="User store path (default: ~/arc/state/users.json)"
+        "--file",
+        default=None,
+        help="Local copy of the user store (default: ~/arc/state/users.json)",
     )
     inner = parser.add_subparsers(dest="subcmd")
 
@@ -291,7 +324,8 @@ def user_handler(args: list[str]) -> None:
     if parsed.subcmd is None:
         parser.print_help()
         sys.exit(0)
-    parsed.func(parsed)
+    with _account_authority(parsed):
+        parsed.func(parsed)
 
 
 __all__ = ["user_handler"]

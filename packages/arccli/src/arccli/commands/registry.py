@@ -255,6 +255,13 @@ def _user_handler(args: list[str]) -> None:
     user_handler(args)
 
 
+def _accounts_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.accounts import accounts_handler
+
+    accounts_handler(args)
+
+
 def _trust_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.trust import trust_handler
@@ -694,6 +701,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_user_handler,
+    ),
+    CommandDef(
+        name="accounts",
+        description="Vault/OpenBao account authority — enroll",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_accounts_handler,
     ),
     CommandDef(
         name="team",

@@ -24,18 +24,23 @@ Three trust rules:
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import hmac
 import logging
 import secrets
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeVar
 from urllib.parse import unquote
 
+from arctrust.authority import AccountAuthorityError
+from arctrust.authority_config import AuthorityConfigError
+from arctrust.monotonic import AnchorUnavailableError
 from arctrust.users import OPERATOR, User, UserStore, UserStoreError
+from arctrust.vault_lease import VaultLeaseError
 from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -192,11 +197,28 @@ def _normalize_code(code: str) -> str:
 # --- shared helpers ---------------------------------------------------------
 
 
+class AuthorityUnavailableError(RuntimeError):
+    """The account authority is unwired, unreachable, or refused its caller."""
+
+
+# Every way the authority can be out of reach. A person sees one answer for all
+# of them (503); the class name alone goes to the log, never the Vault detail.
+_AUTHORITY_DOWN = (
+    AuthorityUnavailableError,
+    UserStoreError,
+    AccountAuthorityError,
+    VaultLeaseError,
+    AuthorityConfigError,
+    AnchorUnavailableError,
+)
+_UNAVAILABLE_MESSAGE = "Account authority is unavailable. Try again shortly."
+
+
 def user_store(request: Request) -> UserStore:
     """The deployment's account authority, or raise when none is configured."""
     factory = getattr(request.app.state, "user_store_factory", None)
     if factory is None:
-        raise RuntimeError("account authority is unavailable")
+        raise AuthorityUnavailableError("account authority is unavailable")
     store: UserStore = factory()
     return store
 
@@ -256,7 +278,28 @@ def _require_operator(request: Request, target: str, operation: str) -> JSONResp
 
 
 async def _in_store(request: Request, fn: Callable[[UserStore], _T]) -> _T:
-    return await asyncio.to_thread(lambda: fn(user_store(request)))
+    try:
+        return await asyncio.to_thread(lambda: fn(user_store(request)))
+    except AuthorityUnavailableError:
+        raise
+    except _AUTHORITY_DOWN as exc:
+        raise AuthorityUnavailableError(type(exc).__name__) from exc
+
+
+def _refuse_when_unavailable(
+    handler: Callable[[Request], Awaitable[JSONResponse]],
+) -> Callable[[Request], Awaitable[JSONResponse]]:
+    """Answer 503, not 500, when a route's account authority is out of reach."""
+
+    @functools.wraps(handler)
+    async def guarded(request: Request) -> JSONResponse:
+        try:
+            return await handler(request)
+        except AuthorityUnavailableError as exc:
+            logger.error("users.%s authority_unavailable class=%s", handler.__name__, exc)
+            return _error(_UNAVAILABLE_MESSAGE, 503)
+
+    return guarded
 
 
 # --- first run --------------------------------------------------------------
@@ -402,6 +445,7 @@ def _email_param(request: Request) -> str:
     return unquote(request.path_params["email"]).strip().lower()
 
 
+@_refuse_when_unavailable
 async def list_users(request: Request) -> JSONResponse:
     """GET /api/users — everyone who can sign in (operator only)."""
     if getattr(request.state, "role", None) != "operator":
@@ -410,6 +454,7 @@ async def list_users(request: Request) -> JSONResponse:
     return JSONResponse({"users": [_row(u) for u in users]})
 
 
+@_refuse_when_unavailable
 async def add_user(request: Request) -> JSONResponse:
     """POST /api/users — add a person with a password the operator sets."""
     refused = _require_operator(request, "user:new", "user.add")
@@ -432,6 +477,7 @@ async def add_user(request: Request) -> JSONResponse:
     return JSONResponse({"user": _row(user)}, status_code=201)
 
 
+@_refuse_when_unavailable
 async def invite_user(request: Request) -> JSONResponse:
     """POST /api/users/invites — a one-time link the invitee uses to set a password."""
     refused = _require_operator(request, "user:invite", "user.invite")
@@ -456,6 +502,7 @@ async def invite_user(request: Request) -> JSONResponse:
     )
 
 
+@_refuse_when_unavailable
 async def reset_link(request: Request) -> JSONResponse:
     """POST /api/users/{email}/reset-link — a one-time link to set a new password."""
     email = _email_param(request)
@@ -491,6 +538,7 @@ def _removes_last_operator(
     return active_operators(False) > 0 and active_operators(True) == 0
 
 
+@_refuse_when_unavailable
 async def set_role(request: Request) -> JSONResponse:
     """PUT /api/users/{email}/role — make someone a viewer or an operator."""
     email = _email_param(request)
@@ -503,6 +551,7 @@ async def set_role(request: Request) -> JSONResponse:
     return await _change(request, email, "user.role", role=body.role, disabled=None)
 
 
+@_refuse_when_unavailable
 async def disable_user(request: Request) -> JSONResponse:
     """POST /api/users/{email}/disable — block sign-in and end their sessions."""
     email = _email_param(request)
@@ -512,6 +561,7 @@ async def disable_user(request: Request) -> JSONResponse:
     return await _change(request, email, "user.disable", role=None, disabled=True)
 
 
+@_refuse_when_unavailable
 async def enable_user(request: Request) -> JSONResponse:
     """POST /api/users/{email}/enable — let a blocked person sign in again."""
     email = _email_param(request)
