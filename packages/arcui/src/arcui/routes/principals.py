@@ -1,4 +1,15 @@
-"""App principals and person delegations over HTTP (SPEC-087 COMP-011).
+"""App principals and person delegations over HTTP (SPEC-087 COMP-010, COMP-011).
+
+``POST /api/principals``                  — a signed-in operator issues an app
+                                            principal; the bearer secret is in
+                                            this response and nowhere else;
+``GET  /api/principals``                  — every principal, never a secret;
+``POST /api/principals/{id}/revoke``      — revoke it; the next request fails.
+
+Issuing by tier (D-823): personal is active at once. Enterprise and federal
+store the principal ``pending`` and queue a ``principal_issue`` approval row
+bound to the record's content hash; :func:`activate_for_approval` and
+:func:`revoke_for_denial` are the approvals route's half of that row.
 
 ``POST /api/me/delegations``              — a signed-in person lets one active app
                                             decide for them (decision scopes only,
@@ -21,19 +32,36 @@ authority answers 503 and writes nothing.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 
+from arcstore.approvals import ApprovalStore, PendingApproval
 from arctrust.authority import AccountAuthorityError
 from arctrust.authority_config import AuthorityConfigError
+from arctrust.canonical import canonical_json
+from arctrust.identity import parse_did
 from arctrust.monotonic import AnchorUnavailableError
-from arctrust.principals import DECISION_SCOPES, Delegation, PrincipalStore, Scope
-from arctrust.users import UserStoreError
+from arctrust.principal_auth import format_bearer, issue_secret
+from arctrust.principals import (
+    DECISION_SCOPES,
+    PRINCIPAL_ISSUE_TOOL,
+    Delegation,
+    Principal,
+    PrincipalStore,
+    PrincipalValidationError,
+    Scope,
+    Tier,
+    derive_app_did,
+    parse_scope,
+    validate_for_tier,
+)
+from arctrust.users import OPERATOR, UserStoreError
 from arctrust.vault_lease import VaultLeaseError
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
@@ -44,6 +72,7 @@ from arcui.principals import RequestPrincipal
 logger = logging.getLogger(__name__)
 
 DELEGATIONS_PATH = "/api/me/delegations"
+PRINCIPALS_PATH = "/api/principals"
 MAX_DELEGATION_TTL_SECONDS = 8 * 60 * 60
 
 _T = TypeVar("_T")
@@ -70,6 +99,21 @@ class DelegationCreate(BaseModel):
     principal_did: str = Field(min_length=1)
     scopes: list[str] = Field(min_length=1)
     ttl_seconds: int = Field(gt=0, le=MAX_DELEGATION_TTL_SECONDS)
+
+
+_AgentList = Annotated[list[Annotated[str, Field(min_length=1)]], Field(min_length=1)]
+
+
+class PrincipalIssue(BaseModel):
+    """Body of ``POST /api/principals``. Strict: no coercion, no extra fields."""
+
+    model_config = ConfigDict(extra="forbid", strict=True, frozen=True)
+
+    name: str = Field(min_length=1, max_length=64)
+    public_key: str = Field(pattern=r"^[0-9a-fA-F]{64}$")
+    scopes: dict[str, _AgentList] = Field(min_length=1)
+    subjects: list[Annotated[str, Field(min_length=1)]] = Field(default_factory=list)
+    expires_at: AwareDatetime | None = None
 
 
 class _RefusedError(Exception):
@@ -241,15 +285,273 @@ async def revoke_delegation(request: Request) -> JSONResponse:
     return JSONResponse(_delegation_row(result))
 
 
+# --- app principals (COMP-010) -------------------------------------------------------
+
+
+def _signed_in_operator(request: Request) -> str | None:
+    """The session DID of a signed-in operator; None for anyone else.
+
+    Static tokens are refused even with the operator role: issuing an app
+    credential must name the person who did it.
+    """
+    principal: RequestPrincipal | None = getattr(request.state, "principal", None)
+    if principal is None or principal.kind != "user" or OPERATOR not in principal.roles:
+        return None
+    return principal.did
+
+
+def _refuse_non_operator(request: Request, operation: str) -> JSONResponse:
+    _audit(request, request.url.path, operation, "denied", "not a signed-in operator")
+    return _error("operator_session_required", 403)
+
+
+def _tier(request: Request) -> Tier:
+    tier: Tier = request.app.state.principals_config.tier
+    return tier
+
+
+def _principal_row(principal: Principal) -> dict[str, object]:
+    """The operator view of a principal: never the secret, never its digest."""
+    row = principal.to_dict()
+    del row["secret_digest"]
+    row["agents"] = sorted({agent for agents in principal.scopes.values() for agent in agents})
+    return row
+
+
+def _new_principal(body: PrincipalIssue, operator_did: str, digest: str) -> Principal:
+    """The pending principal the body describes; scope names are checked here."""
+    public_key = body.public_key.lower()
+    # The app is minted in its issuer's org, so the two DIDs share one tenant.
+    org = parse_did(operator_did)["org"]
+    scopes = {
+        parse_scope(name): tuple(sorted(set(agents))) for name, agents in body.scopes.items()
+    }
+    return Principal(
+        id=uuid.uuid4().hex,
+        name=body.name,
+        did=derive_app_did(bytes.fromhex(public_key), org=org),
+        public_key=public_key,
+        secret_digest=digest,
+        scopes=scopes,
+        subjects=tuple(sorted(set(body.subjects))),
+        status="pending",
+        created_by=operator_did,
+        approved_by=None,
+        created_at=datetime.now(UTC),
+        expires_at=body.expires_at,
+        last_used_at=None,
+        revoked_by=None,
+        revoked_at=None,
+    )
+
+
+async def _parse_issue(
+    request: Request, operator_did: str, digest: str
+) -> Principal | JSONResponse:
+    """The validated pending principal, or the audited 400 refusal."""
+    operation = "principal.issue"
+    try:
+        body = PrincipalIssue.model_validate_json(await request.body())
+    except ValidationError:  # malformed JSON or a refused field
+        _audit(request, PRINCIPALS_PATH, operation, "denied", "invalid_principal")
+        return _error("invalid_principal", 400)
+    try:
+        principal = _new_principal(body, operator_did, digest)
+        validate_for_tier(principal, _tier(request), now=principal.created_at)
+    except PrincipalValidationError as exc:
+        _audit(request, PRINCIPALS_PATH, operation, "denied", exc.reason)
+        return _error(exc.reason, 400)
+    return principal
+
+
+def _store_issued(store: PrincipalStore, principal: Principal, tier: Tier) -> Principal:
+    """Store the request; personal activates it in the same call (D-823)."""
+    if store.get_by_did(principal.did) is not None:
+        raise _RefusedError("duplicate_principal", 409)
+    store.request(principal)
+    if tier != "personal":
+        return principal
+    return store.activate(principal.id, principal.created_by, principal.content_hash())
+
+
+def _issue_approval_row(principal: Principal) -> PendingApproval:
+    """The approval row bound to the pending record's content hash."""
+    scopes = {str(scope): sorted(agents) for scope, agents in principal.scopes.items()}
+    first_agent = principal.scopes[min(principal.scopes)][0]
+    return PendingApproval(
+        id=f"prinissue_{uuid.uuid4().hex[:12]}",
+        agent_did=first_agent,
+        agent_label=principal.name,
+        tool=PRINCIPAL_ISSUE_TOOL,
+        call_hash=principal.content_hash(),
+        arguments={
+            "principal_id": principal.id,
+            "name": principal.name,
+            "scopes": canonical_json(scopes).decode("utf-8"),
+        },
+    )
+
+
+async def _queue_approval(
+    request: Request, principal: Principal, target: str
+) -> str | JSONResponse:
+    """Queue the issue approval; its id, or an audited 503."""
+    store: ApprovalStore | None = getattr(request.app.state, "approval_store", None)
+    try:
+        if store is None:
+            raise RuntimeError("approval store is not configured")
+        created = await store.create(_issue_approval_row(principal))
+    except Exception as exc:  # reason: a failed queue write answers 503, never a 500 page
+        # The pending record stays inert: nothing activates it without this row.
+        logger.error("principals.issue approval_queue_unavailable class=%s", type(exc).__name__)
+        _audit(request, target, "principal.issue", "error", "approval_queue_unavailable")
+        return _error("approval_queue_unavailable", 503)
+    return created.id
+
+
+async def issue_principal(request: Request) -> JSONResponse:
+    """POST /api/principals — issue an app principal; the secret is returned once."""
+    operation = "principal.issue"
+    operator = _signed_in_operator(request)
+    if operator is None:
+        return _refuse_non_operator(request, operation)
+    secret, digest = issue_secret()
+    parsed = await _parse_issue(request, operator, digest)
+    if isinstance(parsed, JSONResponse):
+        return parsed
+    target = f"{PRINCIPALS_PATH}/{parsed.id}"
+    tier = _tier(request)
+    stored = await _in_store(
+        request, target, operation, lambda store: _store_issued(store, parsed, tier)
+    )
+    if isinstance(stored, JSONResponse):
+        return stored
+    body: dict[str, object] = {
+        "principal": _principal_row(stored),
+        "secret": format_bearer(stored.id, secret),
+        "status": stored.status,
+    }
+    if stored.status == "pending":
+        approval_id = await _queue_approval(request, stored, target)
+        if isinstance(approval_id, JSONResponse):
+            return approval_id
+        body["approval_id"] = approval_id
+    _audit(request, target, operation, "applied", f"did={stored.did} status={stored.status}")
+    return JSONResponse(body, status_code=201)
+
+
+async def list_principals(request: Request) -> JSONResponse:
+    """GET /api/principals — every principal (signed-in operator only)."""
+    operation = "principal.list"
+    if _signed_in_operator(request) is None:
+        return _refuse_non_operator(request, operation)
+    result = await _in_store(request, PRINCIPALS_PATH, operation, lambda store: store.list())
+    if isinstance(result, JSONResponse):
+        return result
+    return JSONResponse({"principals": [_principal_row(p) for p in result]})
+
+
+def _revoke_known(store: PrincipalStore, principal_id: str, actor_did: str) -> Principal:
+    current = store.get(principal_id)
+    if current is None:
+        raise _RefusedError("unknown_principal", 404)
+    if current.status == "revoked":
+        raise _RefusedError("already_revoked", 409)
+    return store.revoke(principal_id, actor_did)
+
+
+async def revoke_principal(request: Request) -> JSONResponse:
+    """POST /api/principals/{id}/revoke — the app is refused on its next request."""
+    operation = "principal.revoke"
+    operator = _signed_in_operator(request)
+    if operator is None:
+        return _refuse_non_operator(request, operation)
+    principal_id: str = request.path_params["id"]
+    target = f"{PRINCIPALS_PATH}/{principal_id}"
+    result = await _in_store(
+        request, target, operation, lambda store: _revoke_known(store, principal_id, operator)
+    )
+    if isinstance(result, JSONResponse):
+        return result
+    _audit(request, target, operation, "applied", f"did={result.did}")
+    return JSONResponse({"principal": _principal_row(result)})
+
+
+# --- the approvals route's half of a principal_issue row -----------------------------
+
+
+def _activate_requested(
+    store: PrincipalStore, row: PendingApproval, approver_did: str, *, two_person: bool
+) -> Principal:
+    """Re-read the record the row names; activate it only if it is unchanged."""
+    principal_id = row.arguments.get("principal_id", "")
+    record = store.get(principal_id) if principal_id else None
+    if record is None:
+        raise _RefusedError("principal_issue_record_missing", 409)
+    if record.status != "pending":
+        raise _RefusedError("principal_not_pending", 409)
+    if two_person and record.created_by == approver_did:
+        raise _RefusedError("second_operator_required", 403)
+    if not hmac.compare_digest(record.content_hash().encode(), row.call_hash.encode()):
+        raise _RefusedError("principal_changed_since_the_request", 409)
+    return store.activate(principal_id, approver_did, row.call_hash)
+
+
+async def activate_for_approval(
+    request: Request, row: PendingApproval, approver_did: str
+) -> JSONResponse | None:
+    """Activate the principal an approved ``principal_issue`` row names, or refuse.
+
+    A refusal (missing record, not pending, federal self-approval, changed record)
+    is one ``approval.approve`` denied row and leaves the record and the row as
+    they were. Federal needs a second operator (REQ-554, NIST AC-5).
+    """
+    two_person = _tier(request) == "federal"
+    result = await _in_store(
+        request,
+        f"approval:{row.id}",
+        "approval.approve",
+        lambda store: _activate_requested(store, row, approver_did, two_person=two_person),
+    )
+    return result if isinstance(result, JSONResponse) else None
+
+
+def _revoke_requested(store: PrincipalStore, principal_id: str, actor_did: str) -> None:
+    record = store.get(principal_id) if principal_id else None
+    if record is not None and record.status != "revoked":
+        store.revoke(principal_id, actor_did)
+
+
+async def revoke_for_denial(
+    request: Request, row: PendingApproval, actor_did: str
+) -> JSONResponse | None:
+    """Revoke the pending principal a denied ``principal_issue`` row names."""
+    principal_id = row.arguments.get("principal_id", "")
+    result = await _in_store(
+        request,
+        f"approval:{row.id}",
+        "approval.deny",
+        lambda store: _revoke_requested(store, principal_id, actor_did),
+    )
+    return result if isinstance(result, JSONResponse) else None
+
+
 routes = [
     Route(DELEGATIONS_PATH, list_delegations, methods=["GET"]),
     Route(DELEGATIONS_PATH, create_delegation, methods=["POST"]),
     Route(DELEGATIONS_PATH + "/{id}/revoke", revoke_delegation, methods=["POST"]),
+    Route(PRINCIPALS_PATH, list_principals, methods=["GET"]),
+    Route(PRINCIPALS_PATH, issue_principal, methods=["POST"]),
+    Route(PRINCIPALS_PATH + "/{id}/revoke", revoke_principal, methods=["POST"]),
 ]
 
 __all__ = [
     "DELEGATIONS_PATH",
     "MAX_DELEGATION_TTL_SECONDS",
+    "PRINCIPALS_PATH",
     "DelegationCreate",
+    "PrincipalIssue",
+    "activate_for_approval",
+    "revoke_for_denial",
     "routes",
 ]

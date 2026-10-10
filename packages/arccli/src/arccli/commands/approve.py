@@ -33,9 +33,9 @@ from arcstore.standing_grants import (
     approve_always,
 )
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
+from arctrust.principals import PRINCIPAL_ISSUE_TOOL
 
 from arccli.commands._shared import write as _write
-from arccli.commands.principal import PRINCIPAL_ISSUE_TOOL
 from arccli.formatting import print_table as _print_table
 
 if TYPE_CHECKING:

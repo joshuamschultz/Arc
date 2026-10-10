@@ -46,6 +46,7 @@ from arctrust.sealed_state import (
 
 __all__ = [
     "DECISION_SCOPES",
+    "PRINCIPAL_ISSUE_TOOL",
     "READ_SCOPES",
     "WILDCARD",
     "Delegation",
@@ -62,6 +63,10 @@ __all__ = [
 ]
 
 APP_AGENT_TYPE = "app"
+#: ``PendingApproval.tool`` of an enterprise/federal principal issue request.
+#: Approving such a row (``arc approve`` or the arcui approvals route) activates
+#: the principal it names; denying it revokes the pending record.
+PRINCIPAL_ISSUE_TOOL = "principal_issue"
 WILDCARD = "*"
 _ED25519_KEY_BYTES = 32
 _CONTENT_HASH_DOMAIN = "arc.principal.v1"

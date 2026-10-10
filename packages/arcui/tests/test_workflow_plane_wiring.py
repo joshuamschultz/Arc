@@ -261,8 +261,8 @@ async def test_run_detail_path_names_what_ran_not_what_was_skipped(tmp_path: Pat
     assert detail["path_taken"] == ["collect"]
 
 
-async def test_the_dashboard_decides_a_gate_as_the_operator() -> None:
-    """Only an operator session reaches the gate route; it carries the operator role."""
+async def test_the_dashboard_decides_a_gate_with_the_actors_own_roles() -> None:
+    """The decider's roles are the acting identity's, never a fixed operator role (SPEC-087)."""
     from unittest.mock import AsyncMock
 
     from arcteam.workflow.control_plane import OPERATOR_ROLE, ControlPlaneResult
@@ -271,18 +271,20 @@ async def test_the_dashboard_decides_a_gate_as_the_operator() -> None:
     team.resolve_gate = AsyncMock(return_value=ControlPlaneResult(ok=True))
     plane = DashboardWorkflowPlane(plane=team, definitions=None, runs=None, tasks=None)
 
-    result = await plane.resolve_gate(
-        "wf/run-1/review/0",
-        decision="approve",
-        notes="",
-        actor=OperatorActor(did="did:arc:ui:operator", session_id="s1"),
-    )
+    for roles in (frozenset({OPERATOR_ROLE}), frozenset({"viewer"})):
+        result = await plane.resolve_gate(
+            "wf/run-1/review/0",
+            decision="approve",
+            notes="",
+            actor=OperatorActor(did="did:arc:user/1", session_id="s1", roles=roles),
+        )
 
-    assert result.errors is None
-    assert team.resolve_gate.await_args.kwargs["actor_roles"] == frozenset({OPERATOR_ROLE})
+        assert result.errors is None
+        kwargs = team.resolve_gate.await_args.kwargs
+        assert (kwargs["actor_did"], kwargs["actor_roles"]) == ("did:arc:user/1", roles)
 
 
-async def test_a_gate_denial_is_reported_not_raised() -> None:
+async def test_a_gate_denial_is_reported_forbidden_not_raised() -> None:
     from unittest.mock import AsyncMock
 
     from arcteam.workflow.errors import GateNotAuthorizedError
@@ -295,4 +297,5 @@ async def test_a_gate_denial_is_reported_not_raised() -> None:
         "t", decision="approve", notes="", actor=OperatorActor(did="did:x:y", session_id="s")
     )
 
-    assert result.errors is not None and result.errors[0].field == "actor"
+    assert result.forbidden
+    assert result.value is None and result.errors is None

@@ -32,6 +32,7 @@ from arctrust.canonical import canonical_json
 from arctrust.monotonic import AnchorUnavailableError
 from arctrust.principal_auth import format_bearer, issue_secret
 from arctrust.principals import (
+    PRINCIPAL_ISSUE_TOOL,
     WILDCARD,
     Principal,
     PrincipalStore,
@@ -49,10 +50,6 @@ from arccli.commands.user import _account_authority
 
 if TYPE_CHECKING:
     from arcstore.approvals import PendingApproval
-
-#: ``PendingApproval.tool`` of a principal issue request; ``arc approve`` and the
-#: arcui approvals route activate the principal when they approve such a row.
-PRINCIPAL_ISSUE_TOOL = "principal_issue"
 
 _TIERS: dict[str, Tier] = {
     "personal": "personal",
@@ -411,7 +408,6 @@ def principal_handler(args: list[str]) -> None:
 
 
 __all__ = [
-    "PRINCIPAL_ISSUE_TOOL",
     "activate_requested",
     "deployment_tier",
     "principal_handler",

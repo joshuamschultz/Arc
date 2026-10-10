@@ -16,11 +16,14 @@ from __future__ import annotations
 
 import logging
 import re
+from typing import Any
 
+from arctrust.principals import Scope
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.acting import app_target_refusal, is_app
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -70,12 +73,47 @@ async def get_runs(request: Request) -> JSONResponse:
 
 
 async def get_run_timeline(request: Request) -> JSONResponse:
-    """GET /api/runs/{run_id}/timeline — ordered tool/code/llm/run events for a run."""
+    """GET /api/runs/{run_id}/timeline — ordered tool/code/llm/run events for a run.
+
+    Operator and viewer sessions read any run, as before. An app needs
+    ``runs:read`` on the agent the trace itself names (SPEC-087 COMP-005); an
+    unknown or unattributable run is 404 to it.
+    """
     run_id = request.path_params["run_id"]
     if not _VALID_ID_RE.match(run_id):
         return _invalid("Invalid run_id format")
     timeline = await request.app.state.observe.timeline(run_id=run_id)
+    if is_app(request):
+        denial = await _app_timeline_refusal(request, run_id, timeline)
+        if denial is not None:
+            return denial
     return JSONResponse({"run_id": run_id, "timeline": timeline})
+
+
+async def _app_timeline_refusal(
+    request: Request, run_id: str, timeline: list[dict[str, Any]]
+) -> JSONResponse | None:
+    async def _trace_agent() -> str | None:
+        return _single_agent(timeline)
+
+    return await app_target_refusal(
+        request,
+        Scope.RUNS_READ,
+        _trace_agent,
+        target=f"run:{run_id}",
+        operation="run.timeline.read",
+    )
+
+
+def _single_agent(timeline: list[dict[str, Any]]) -> str | None:
+    """The one agent DID a trace's own rows name; None when none or several.
+
+    An app is bound to agents, so a trace it may read must belong to exactly
+    one: a trace naming no agent (unknown run) or more than one is not served
+    to an app (fail closed). Operator sessions never reach this.
+    """
+    agents = {str(row["actor_did"]) for row in timeline if row.get("actor_did")}
+    return next(iter(agents)) if len(agents) == 1 else None
 
 
 async def get_run_audit(request: Request) -> JSONResponse:

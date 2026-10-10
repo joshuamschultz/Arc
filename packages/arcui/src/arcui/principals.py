@@ -468,7 +468,7 @@ async def _check_path_agent(request: Request) -> JSONResponse | None:
     match = route.pattern.fullmatch(path)
     if match is None:
         return None
-    agent_did = await _roster_did(request, route.agent_from_path(match))
+    agent_did = await roster_did(request, route.agent_from_path(match))
     return require_scope(
         request,
         route.scope,
@@ -478,7 +478,7 @@ async def _check_path_agent(request: Request) -> JSONResponse | None:
     )
 
 
-async def _roster_did(request: Request, label: str) -> str | None:
+async def roster_did(request: Request, label: str) -> str | None:
     """The DID of the roster agent labelled ``label``; None when unknown."""
     provider = getattr(request.app.state, "roster_provider", None)
     if provider is None:
@@ -624,6 +624,7 @@ __all__ = [
     "new_replay_cache",
     "record_ignored_on_behalf_of",
     "require_scope",
+    "roster_did",
     "scope_allowed",
     "session_principal",
     "static_token_principal",

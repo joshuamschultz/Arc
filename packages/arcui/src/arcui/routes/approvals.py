@@ -26,13 +26,14 @@ from arcstore.approvals import ApprovalStore
 from arcstore.standing_grants import StandingGrantRefusedError, approve_always
 from arctrust import operator_signer_for
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
-from arctrust.principals import Scope
+from arctrust.principals import PRINCIPAL_ISSUE_TOOL, Scope
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.acting import ActingIdentity, Refusal, acting_identity, decider
 from arcui.audit import emit_mutation_audit
+from arcui.routes.principals import activate_for_approval, revoke_for_denial
 from arcui.routes.standing_grants import grant_row, standing_store
 from arcui.schemas import ErrorResponse
 
@@ -349,6 +350,13 @@ async def approve_request(request: Request) -> JSONResponse:
             )
             return _error(signed, 409)
 
+    # SPEC-087 COMP-010: an app principal issue row activates the pending record
+    # it names, only while that record still hashes to the row's call_hash.
+    if row.tool == PRINCIPAL_ISSUE_TOOL:
+        refused = await activate_for_approval(request, row, decided.actor_did)
+        if refused is not None:
+            return refused
+
     grant = sign_approval_for_hash(row.call_hash, operator)
     updated = await store.resolve(
         approval_id,
@@ -438,8 +446,14 @@ async def deny_request(request: Request) -> JSONResponse:
         return decided
 
     store = _store(request)
-    if await store.get(approval_id) is None:
+    row = await store.get(approval_id)
+    if row is None:
         return _error("not found", 404)
+    # Revoke before the row closes: a race can only leave the app revoked.
+    if row.tool == PRINCIPAL_ISSUE_TOOL and row.status == "pending":
+        refused = await revoke_for_denial(request, row, decided.actor_did)
+        if refused is not None:
+            return refused
     updated = await store.resolve(
         approval_id,
         status="denied",

@@ -26,9 +26,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from arcui.acting import Refusal, acting_identity, decider, is_control_allowed
+from arcui.acting import Refusal, acting_identity, control_refusal, decider
 from arcui.audit import emit_mutation_audit
-from arcui.principals import SCOPE_DENIED
 from arcui.schemas import ErrorResponse
 
 _logger = logging.getLogger(__name__)
@@ -91,28 +90,6 @@ def _is_operator(request: Request) -> bool:
     return getattr(request.state, "role", None) == "operator"
 
 
-def _tasks_write_refusal(
-    request: Request, agent_did: str | None, *, target: str, operation: str
-) -> JSONResponse | None:
-    """None when the caller may write tasks owned by ``agent_did``; else an audited 403.
-
-    Operators pass; an app needs ``tasks:write`` bound to the task's owner agent
-    and, acting for a person, a person who could do it themselves (REQ-562).
-    An unowned task binds no agent, so an app is refused.
-    """
-    if is_control_allowed(request, Scope.TASKS_WRITE, agent_did):
-        return None
-    if getattr(request.state, "role", None) == "app":
-        code = SCOPE_DENIED
-        detail = f"{SCOPE_DENIED} scope={Scope.TASKS_WRITE.value} agent={agent_did}"
-    else:
-        code, detail = "operator_role_required", "viewer role"
-    emit_mutation_audit(
-        request, target=target, operation=operation, outcome="denied", detail=detail
-    )
-    return _error(code, 403)
-
-
 async def _json_body(request: Request) -> dict[str, Any] | None:
     try:
         body = await request.json()
@@ -125,8 +102,11 @@ async def create_task(request: Request) -> JSONResponse:
     """POST /api/team/tasks — create a task (operator, or an app bound to the owner agent)."""
     body = await _json_body(request)
     owner = (body or {}).get("owner_did")
-    refused = _tasks_write_refusal(
+    # An app needs ``tasks:write`` bound to the owner agent; an unowned task
+    # binds no agent, so an app is refused.
+    refused = control_refusal(
         request,
+        Scope.TASKS_WRITE,
         owner if isinstance(owner, str) else None,
         target="task:new",
         operation="task.create",
@@ -359,15 +339,14 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     # it lands back in review — the loop an operator sees as "reject does
     # nothing". Gate resolution belongs to the runner's control plane, so it is
     # relayed there rather than flipped in the task store here.
+    # It follows the gate route's rules: ``gates:resolve`` on the gate's owner
+    # agent, then the decider, then the control plane's approver list.
     if str(task.metadata.get("node_kind", "")) == "gate":
-        if not _is_operator(request):
-            emit_mutation_audit(
-                request, target=target, operation=operation, outcome="denied", detail="viewer role"
-            )
-            return _error("operator_role_required", 403)
         return await _resolve_gate(request, task_id, approve=approve, target=target)
 
-    refused = _tasks_write_refusal(request, task.owner_did, target=target, operation=operation)
+    refused = control_refusal(
+        request, Scope.TASKS_WRITE, task.owner_did, target=target, operation=operation
+    )
     if refused is not None:
         return refused
     identity = await asyncio.to_thread(decider, request, Scope.TASKS_WRITE)
@@ -397,14 +376,16 @@ async def _resolve_gate(request: Request, task_id: str, *, approve: bool, target
     produce. When no runner is embedded the plane is absent and the operator is
     told so (503) rather than silently falling back to the looping path.
     """
-    from arcui.routes.workflows import _actor, _gate_plane, _relay
+    from arcui.routes.workflows import GATE_OPERATION, _relay, admit_gate_decider
 
-    plane = _gate_plane(request)
-    if plane is None:
-        return _error("gate_control_plane_unavailable", 503)
+    admitted = await admit_gate_decider(request, task_id, target=target)
+    if isinstance(admitted, Response):
+        return admitted
     decision = "approve" if approve else "fail_run"
-    result = await plane.resolve_gate(task_id, decision=decision, notes="", actor=_actor(request))
-    return _relay(request, result, target=target, operation="gate.resolve", ok_status=200)
+    result = await admitted.plane.resolve_gate(
+        task_id, decision=decision, notes="", actor=admitted.actor
+    )
+    return _relay(request, result, target=target, operation=GATE_OPERATION, ok_status=200)
 
 
 async def approve_task(request: Request) -> Response:

@@ -383,6 +383,15 @@ class WorkflowRunner:
         """The deployment posture this runner enforces."""
         return self._tier
 
+    @property
+    def audit_sink(self) -> AuditSink:
+        """The sink this runner audits to (a ``NullSink`` when none was wired).
+
+        A control plane composed onto this runner hands it on, so its
+        ``workflow.gate.*`` / ``workflow.run.*`` records are not dropped.
+        """
+        return self._sink
+
     async def member_roles(self, did: str) -> frozenset[str]:
         """The team-registry roles ``did`` holds; empty when no roster is wired.
 
