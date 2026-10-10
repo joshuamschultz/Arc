@@ -6,7 +6,11 @@ from datetime import UTC, datetime
 
 
 class ReplayCache:
-    """Sliding-window nonce cache. Rejects replays and stale timestamps.
+    """Sliding-window nonce cache. Rejects replays, stale and future timestamps.
+
+    A ``ts`` more than ``max_skew_seconds`` ahead of this clock is refused, so
+    a far-future stamp can neither pin its nonce indefinitely nor stay "fresh"
+    across a restart that empties the cache.
 
     A nonce is remembered until its own timestamp can no longer pass the
     freshness check (``max(arrival, ts) + window``). Pruning by arrival time
@@ -14,8 +18,9 @@ class ReplayCache:
     reopening a replay for that request.
     """
 
-    def __init__(self, window_seconds: float = 300.0) -> None:
+    def __init__(self, window_seconds: float = 300.0, max_skew_seconds: float = 30.0) -> None:
         self._window = window_seconds
+        self._max_skew = max_skew_seconds
         # nonce -> POSIX time after which the entry may be forgotten.
         self._forget_after: dict[str, float] = {}
 
@@ -36,7 +41,7 @@ class ReplayCache:
             sent_at = datetime.fromisoformat(ts).timestamp()
         except ValueError:
             return False
-        if now - sent_at > self._window:
+        if now - sent_at > self._window or sent_at - now > self._max_skew:
             return False
         if nonce in self._forget_after:
             return False
