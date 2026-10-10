@@ -514,17 +514,30 @@ async def revoke_principal(request: Request) -> JSONResponse:
 
 
 def _activate_requested(
-    store: PrincipalStore, row: PendingApproval, approver_did: str, *, two_person: bool
+    store: PrincipalStore,
+    row: PendingApproval,
+    approver_did: str,
+    *,
+    requester_is_operator: Callable[[str], bool] | None,
 ) -> Principal:
-    """Re-read the record the row names; activate it only if it is unchanged."""
+    """Re-read the record the row names; activate it only if it is unchanged.
+
+    ``requester_is_operator`` is set at federal only (the two-person rule): the
+    requester must be a live operator account other than the approver. A
+    request made with the deployment key names no person, so it can never be
+    the "first person" and is refused rather than compared.
+    """
     principal_id = row.arguments.get("principal_id", "")
     record = store.get(principal_id) if principal_id else None
     if record is None:
         raise _RefusedError("principal_issue_record_missing", 409)
     if record.status != "pending":
         raise _RefusedError("principal_not_pending", 409)
-    if two_person and record.created_by == approver_did:
-        raise _RefusedError("second_operator_required", 403)
+    if requester_is_operator is not None:
+        if record.created_by == approver_did:
+            raise _RefusedError("second_operator_required", 403)
+        if not requester_is_operator(record.created_by):
+            raise _RefusedError("named_requester_required", 403)
     if not hmac.compare_digest(record.content_hash().encode(), row.call_hash.encode()):
         raise _RefusedError("principal_changed_since_the_request", 409)
     return store.activate(principal_id, approver_did, row.call_hash)
@@ -539,14 +552,33 @@ async def activate_for_approval(
     is one ``approval.approve`` denied row and leaves the record and the row as
     they were. Federal needs a second operator (REQ-554, NIST AC-5).
     """
-    two_person = _tier(request) == "federal"
+    requester_check = _live_operator_check(request) if _tier(request) == "federal" else None
     result = await _in_store(
         request,
         f"approval:{row.id}",
         "approval.approve",
-        lambda store: _activate_requested(store, row, approver_did, two_person=two_person),
+        lambda store: _activate_requested(
+            store, row, approver_did, requester_is_operator=requester_check
+        ),
     )
     return result if isinstance(result, JSONResponse) else None
+
+
+def _live_operator_check(request: Request) -> Callable[[str], bool]:
+    """``did -> is it a live (enabled) operator account?``, read from the user store.
+
+    Runs inside the store thread. No user store wired is an authority failure
+    (503 through :func:`_in_store`), never an allow.
+    """
+    factory = getattr(request.app.state, "user_store_factory", None)
+
+    def _is_operator(did: str) -> bool:
+        if factory is None:
+            raise AccountAuthorityError("user store is not configured")
+        users = factory().list()
+        return any(u.did == did and not u.disabled and OPERATOR in u.roles for u in users)
+
+    return _is_operator
 
 
 def _revoke_requested(store: PrincipalStore, principal_id: str, actor_did: str) -> None:

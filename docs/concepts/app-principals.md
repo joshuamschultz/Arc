@@ -54,8 +54,8 @@ Tier changes how strict Arc is. It does not turn the feature off. The same code 
 | Issue | Active at once | Pending until an operator approves | Pending until a second operator approves |
 | Wildcard agent or subject (`*`) | Allowed | Refused | Refused |
 | Expiry | Optional | Required, at most 90 days | Required, at most 30 days |
-| Signed requests | Bearer only | Bearer, or signed if `require_signed_requests = true` | Signed always. Bearer is refused |
-| Two-person approval | No | No | Yes. The requester cannot approve |
+| Signed requests | Bearer, or signed (not required) | Bearer, or signed if `require_signed_requests = true` | Signed always. Bearer is refused |
+| Two-person approval | No | No | Yes. The requester (a signed-in operator) cannot approve. The CLI cannot issue |
 | Person delegation for decisions | Not used | Not used | Required |
 | Decisions on the static operator token | Allowed | Allowed now, refused later (see rollout) | Refused |
 

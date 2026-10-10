@@ -53,20 +53,20 @@ You can do the same in the dashboard under Settings, Apps. Use `arc principal li
 Tier limits apply:
 
 - Enterprise: `--expires` required, at most `90d`. No `*` agents or subjects.
-- Federal: `--expires` required, at most `30d`. No `*` agents or subjects.
+- Federal: the CLI refuses to issue. Issue in the dashboard under Settings, Apps, signed in as an operator. `--expires` at most `30d`. No `*` agents or subjects.
 
 ## 3. Approve (enterprise and federal)
 
 At personal, the principal is active at once. Skip this step.
 
-At enterprise and federal, `arc principal issue` prints `Status: pending` and an approval ID:
+At enterprise, `arc principal issue` prints `Status: pending` and an approval ID. At federal, the dashboard issue shows the pending approval:
 
 ```bash
 arc approve <approval-id>
 ```
 
 - Enterprise: an operator runs `arc approve`.
-- Federal: the CLI refuses. A second operator, not the requester, must approve it in the dashboard.
+- Federal: the CLI refuses. A second operator, not the requester, must approve it in the dashboard. The requester must be a signed-in operator account. A request made with the deployment key names no person, so Arc refuses to approve it.
 
 Approval fails if the record changed after the request. Issue a new one instead.
 
@@ -127,5 +127,7 @@ Every refusal is audited. The body is `{"error": "<code>"}`.
 | 403 | `on_behalf_of_denied` | The person is unknown, disabled, or not in the allowlist | Add the person with `--subject` on a new principal |
 | 403 | `delegation_required` | Federal. No live delegation for this app and scope | Ask the person to create one in their session |
 | 403 | `operator_account_required` | A decision arrived with no named person where the tier needs one | Use a named account, or send `X-Arc-On-Behalf-Of` |
+| 403 | `second_operator_required` | Federal. The approver is the requester | A different operator approves |
+| 403 | `named_requester_required` | Federal. The request was not made by a live operator account | Issue again in the dashboard, signed in |
 | 429 | `rate_limited` | Over `rate_per_minute` | Slow down, or raise `[ui.principals] rate_per_minute` |
 | 503 | `account_authority_unavailable` | Arc cannot reach the account authority. It fails closed | Restore Vault or OpenBao. Retry |

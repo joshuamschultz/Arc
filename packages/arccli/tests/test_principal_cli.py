@@ -387,6 +387,39 @@ def test_bare_enterprise_issue_is_pending_with_an_approval_row_bound_to_the_reco
     assert record.secret_digest == secret_digest(secret)
 
 
+def test_federal_issue_is_refused_and_writes_nothing(
+    deployment: Deployment,
+    approvals: FakeBackend,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Federal (REQ-554): the deployment key is not a person, so a CLI request
+    could never be checked against the second approver. Issue in the dashboard."""
+    # Federal requires Transit custody; the refusal comes before any custody use.
+    path = config_file("arcagent.toml")
+    path.write_text(
+        '[security]\ntier = "federal"\ncustody = "vault_transit"\n\n' + path.read_text()
+    )
+    key_file, _ = _public_key_file(tmp_path)
+
+    output = _arc_fails(
+        capsys,
+        "issue",
+        "--name",
+        "billing-bot",
+        "--public-key-file",
+        str(key_file),
+        "--scope",
+        f"runs:read={_agent_did()}",
+        "--expires",
+        "7d",
+    )
+
+    assert "dashboard" in output.lower()
+    assert BEARER_RE.search(output) is None
+    assert _approval_rows(approvals) == []
+
+
 def test_enterprise_issue_without_expiry_exits_1_and_writes_nothing(
     enterprise: Deployment,
     approvals: FakeBackend,
