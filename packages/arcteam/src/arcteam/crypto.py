@@ -19,7 +19,8 @@ from arcteam.types import Message
 
 # Envelope fields the signature binds. Excludes routing/transport fields that
 # the backend assigns after signing (``seq``), the signature itself (``sig``),
-# and mutable delivery bookkeeping (``status``, ``meta``).
+# and mutable delivery bookkeeping (``status``). ``meta`` IS signed (see the
+# end of the tuple) so a relay cannot strip or swap envelope metadata.
 _SIGNED_FIELDS = (
     "id",
     "ts",

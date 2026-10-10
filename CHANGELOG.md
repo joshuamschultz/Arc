@@ -148,7 +148,7 @@ for hostile-insider zero trust.
   with personal/shared save, retrieve, search, promote and revoke scopes.
 - A removable one-time SQLite-to-PostgreSQL migration tool under `tools/one_time/`.
 - A cross-package zero-trust adversarial battery:
-  `uv run python scripts/run_adversarial_tests.py`.
+  `uv run python tests/run_adversarial_tests.py`.
 
 ### Changed
 
