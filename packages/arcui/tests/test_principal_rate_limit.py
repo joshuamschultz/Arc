@@ -121,8 +121,9 @@ class TestPrincipalRateLimiter:
 
     @pytest.mark.parametrize("rate", [0, -5])
     def test_config_refuses_non_positive_rate(self, rate: int) -> None:
-        from arcui.principals import PrincipalsConfig
         from pydantic import ValidationError
+
+        from arcui.principals import PrincipalsConfig
 
         with pytest.raises(ValidationError):
             PrincipalsConfig(tier="personal", rate_per_minute=rate)

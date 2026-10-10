@@ -33,6 +33,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+
+from arctrust import replay as replay_module
+from arctrust.canonical import canonical_json
+from arctrust.identity import did_from_public_key
+from arctrust.keypair import KeyPair, generate_keypair, verify
 from arctrust.principal_auth import (
     CLOCK_SKEW_SECONDS,
     REPLAY_WINDOW_SECONDS,
@@ -42,11 +47,6 @@ from arctrust.principal_auth import (
     sign_request,
     verify_signed,
 )
-
-from arctrust import replay as replay_module
-from arctrust.canonical import canonical_json
-from arctrust.identity import did_from_public_key
-from arctrust.keypair import KeyPair, generate_keypair, verify
 from arctrust.principals import Principal, Scope, derive_app_did
 from arctrust.replay import ReplayCache
 
