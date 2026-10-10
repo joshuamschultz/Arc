@@ -209,6 +209,8 @@ class PostgresInboxRepository:
         reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
+        on_behalf_of: str | None = None,
+        via: str | None = None,
     ) -> Message:
         async with self._pool.acquire() as connection:
             async with connection.transaction():
@@ -233,6 +235,8 @@ class PostgresInboxRepository:
                     event_id=event_id,
                     reply_to_event_id=reply_to_event_id,
                     trace=trace or TraceMetadata(classification=thread.classification),
+                    on_behalf_of=on_behalf_of,
+                    via=via,
                 )
                 if message.trace.classification != thread.classification:
                     raise ValueError("message classification must match thread classification")
@@ -275,6 +279,8 @@ class PostgresInboxRepository:
         trace: TraceMetadata | None = None,
         envelope: dict[str, object],
         join: bool = False,
+        on_behalf_of: str | None = None,
+        via: str | None = None,
     ) -> tuple[Message, ...]:
         """Persist all inbox copies and transport work in one DB transaction.
 
@@ -352,6 +358,8 @@ class PostgresInboxRepository:
                         event_id=event_id,
                         reply_to_event_id=reply_to_event_id,
                         trace=trace or TraceMetadata(classification=stored_thread.classification),
+                        on_behalf_of=on_behalf_of,
+                        via=via,
                     )
                     result = await connection.execute(
                         "INSERT INTO inbox_messages(message_id,thread_id,payload,created_at) "

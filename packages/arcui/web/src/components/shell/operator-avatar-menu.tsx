@@ -1,4 +1,4 @@
-import { Lock, LockOpen, LogOut } from 'lucide-react'
+import { Handshake, Lock, LockOpen, LogOut } from 'lucide-react'
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -76,6 +76,14 @@ export function OperatorAvatarMenu() {
             {operatorOn ? 'Operator controls on' : 'Operator controls off'}
           </DropdownMenuCheckboxItem>
           <DropdownMenuSeparator />
+          {/* The person's own account settings. A plain link: this menu also
+              renders outside a router (page-header tests, the shell). */}
+          <DropdownMenuItem asChild>
+            <a href="/settings?tab=my-delegations">
+              <Handshake />
+              My delegations
+            </a>
+          </DropdownMenuItem>
           <DropdownMenuItem variant="destructive" onClick={() => void signOut()}>
             <LogOut />
             Sign out

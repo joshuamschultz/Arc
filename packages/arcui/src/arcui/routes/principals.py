@@ -440,15 +440,48 @@ async def issue_principal(request: Request) -> JSONResponse:
     return JSONResponse(body, status_code=201)
 
 
+async def _pending_approval_ids(request: Request, principals: list[Principal]) -> dict[str, str]:
+    """principal id -> its pending ``principal_issue`` approval id; O(pending rows).
+
+    A missing or unreachable approval queue leaves the map empty: the row still
+    lists as pending, only the link to its approval card is absent.
+    """
+    if not any(p.status == "pending" for p in principals):
+        return {}
+    store: ApprovalStore | None = getattr(request.app.state, "approval_store", None)
+    if store is None:
+        return {}
+    try:
+        rows = await store.list(status="pending")
+    except Exception as exc:  # reason: the link is optional; the list must still answer
+        logger.warning("principals.list approval_lookup_unavailable class=%s", type(exc).__name__)
+        return {}
+    return {
+        row.arguments["principal_id"]: row.id
+        for row in rows
+        if row.tool == PRINCIPAL_ISSUE_TOOL and row.arguments.get("principal_id")
+    }
+
+
 async def list_principals(request: Request) -> JSONResponse:
-    """GET /api/principals — every principal (signed-in operator only)."""
+    """GET /api/principals — every principal (signed-in operator only).
+
+    A pending row carries ``approval_id`` so the operator can open its approval card.
+    """
     operation = "principal.list"
     if _signed_in_operator(request) is None:
         return _refuse_non_operator(request, operation)
     result = await _in_store(request, PRINCIPALS_PATH, operation, lambda store: store.list())
     if isinstance(result, JSONResponse):
         return result
-    return JSONResponse({"principals": [_principal_row(p) for p in result]})
+    approval_ids = await _pending_approval_ids(request, result)
+    rows = []
+    for principal in result:
+        row = _principal_row(principal)
+        if principal.status == "pending" and principal.id in approval_ids:
+            row["approval_id"] = approval_ids[principal.id]
+        rows.append(row)
+    return JSONResponse({"principals": rows})
 
 
 def _revoke_known(store: PrincipalStore, principal_id: str, actor_did: str) -> Principal:

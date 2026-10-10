@@ -296,3 +296,112 @@ async def test_reply_translates_another_mailbox_local_ids_to_canonical_mail_iden
     assert beta_messages.items[-1].reply_to_id == beta_messages.items[0].message_id
     assert operator_messages.items[-1].reply_to_event_id == parent.event_id
     assert beta_messages.items[-1].reply_to_event_id == parent.event_id
+
+
+# --- SPEC-087 T-1285 (REQ-570, COMP-009, D-827): mail sent for a person -------------
+#
+# The transport sender stays the signing identity; the person (``on_behalf_of``)
+# and the app (``via``) ride in ``Message.meta``, which the signature covers, so a
+# relay cannot strip or swap them. Omitted values leave the keys ABSENT from meta
+# (no ``null`` noise in the signed envelope).
+
+_PERSON = "did:arc:default:user/ada"
+_OTHER_PERSON = "did:arc:default:user/mallory"
+_APP = "did:arc:default:app/reportbot"
+
+
+@pytest.mark.asyncio
+async def test_mail_send_on_behalf_of_and_via_land_in_signed_meta(tmp_path: Path) -> None:
+    identity = _identity()
+    transport = _Transport()
+    service, _store, _outbox = _service(tmp_path, identity, transport)
+
+    await service.send(_request(identity, on_behalf_of=_PERSON, via=_APP))
+
+    (delivered,) = transport.messages
+    assert delivered.meta["on_behalf_of"] == _PERSON
+    assert delivered.meta["via"] == _APP
+    # The transport sender and signer are unchanged: the person is metadata only.
+    assert delivered.sender == "agent://alpha"
+    assert delivered.signer_did == identity.did
+    assert verify_message(delivered, identity.public_key) is True
+
+
+@pytest.mark.asyncio
+async def test_mail_send_meta_is_in_the_durable_outbox_envelope(tmp_path: Path) -> None:
+    identity = _identity()
+    service, _store, outbox = _service(tmp_path, identity, _Transport(fail=True))
+
+    await service.send(_request(identity, on_behalf_of=_PERSON, via=_APP))
+
+    envelope = Message.model_validate(outbox.pending()[0].envelope)
+    assert envelope.meta["on_behalf_of"] == _PERSON
+    assert envelope.meta["via"] == _APP
+    assert verify_message(envelope, identity.public_key) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "forged"),
+    [("on_behalf_of", _OTHER_PERSON), ("via", "did:arc:default:app/evil")],
+)
+async def test_mail_swapping_signed_meta_after_signing_fails_verification(
+    tmp_path: Path, key: str, forged: str
+) -> None:
+    identity = _identity()
+    transport = _Transport()
+    service, _store, _outbox = _service(tmp_path, identity, transport)
+    await service.send(_request(identity, on_behalf_of=_PERSON, via=_APP))
+    (delivered,) = transport.messages
+    assert verify_message(delivered, identity.public_key) is True
+
+    tampered = delivered.model_copy(update={"meta": {**delivered.meta, key: forged}})
+
+    assert verify_message(tampered, identity.public_key) is False
+
+
+@pytest.mark.asyncio
+async def test_mail_stripping_person_and_app_after_signing_fails_verification(
+    tmp_path: Path,
+) -> None:
+    identity = _identity()
+    transport = _Transport()
+    service, _store, _outbox = _service(tmp_path, identity, transport)
+    await service.send(_request(identity, on_behalf_of=_PERSON, via=_APP))
+    (delivered,) = transport.messages
+
+    stripped_meta = {k: v for k, v in delivered.meta.items() if k not in {"on_behalf_of", "via"}}
+    stripped = delivered.model_copy(update={"meta": stripped_meta})
+
+    assert verify_message(stripped, identity.public_key) is False
+
+
+@pytest.mark.asyncio
+async def test_mail_send_person_without_app_puts_only_on_behalf_of_in_meta(
+    tmp_path: Path,
+) -> None:
+    identity = _identity()
+    transport = _Transport()
+    service, _store, _outbox = _service(tmp_path, identity, transport)
+
+    await service.send(_request(identity, on_behalf_of=_PERSON))
+
+    (delivered,) = transport.messages
+    assert delivered.meta["on_behalf_of"] == _PERSON
+    assert "via" not in delivered.meta
+
+
+@pytest.mark.asyncio
+async def test_mail_send_without_person_or_app_leaves_meta_keys_absent(tmp_path: Path) -> None:
+    identity = _identity()
+    transport = _Transport()
+    service, _store, _outbox = _service(tmp_path, identity, transport)
+
+    request = _request(identity)
+    await service.send(request)
+
+    assert request.on_behalf_of is None
+    assert request.via is None
+    (delivered,) = transport.messages
+    assert "on_behalf_of" not in delivered.meta
+    assert "via" not in delivered.meta

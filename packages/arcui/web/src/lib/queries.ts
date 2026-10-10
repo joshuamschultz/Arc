@@ -1218,6 +1218,10 @@ export interface DurableInboxMessage extends Dict {
   }>
   attachments?: string[]
   reply_to_id?: string | null
+  /** The person the mail was sent for (signed mail meta, SPEC-087 D-827). */
+  on_behalf_of?: string | null
+  /** The app that sent it for that person, if any. */
+  via?: string | null
 }
 
 export interface DurableInboxResponse {

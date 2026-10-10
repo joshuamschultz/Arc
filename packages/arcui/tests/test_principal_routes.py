@@ -717,6 +717,26 @@ class TestEnterpriseIssue:
         )
         assert record.secret_digest not in row.model_dump_json()
 
+    def test_list_links_a_pending_row_to_its_approval_and_drops_it_once_active(
+        self, deploy: Callable[..., _Deployment]
+    ) -> None:
+        # The Apps page links a pending row to its approval card (T-1288).
+        deployment = deploy("enterprise")
+        headers, _ = deployment.operator()
+        issued = _issue(deployment, headers)
+
+        (pending,) = deployment.client.get(PRINCIPALS, headers=headers).json()["principals"]
+        assert pending["status"] == "pending"
+        assert pending["approval_id"] == issued.approval_id
+
+        resp = deployment.client.post(
+            f"/api/approvals/{issued.approval_id}/approve", headers=headers
+        )
+        assert resp.status_code == 200, resp.text
+        (active,) = deployment.client.get(PRINCIPALS, headers=headers).json()["principals"]
+        assert active["status"] == "active"
+        assert "approval_id" not in active
+
     def test_pending_principal_token_is_401_at_the_middleware(
         self, deploy: Callable[..., _Deployment]
     ) -> None:

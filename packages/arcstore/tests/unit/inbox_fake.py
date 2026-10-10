@@ -199,6 +199,8 @@ class FakeInboxRepository:
         reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
+        on_behalf_of: str | None = None,
+        via: str | None = None,
     ) -> Message:
         thread = self._thread(thread_id)
         participants = {item.participant_id for item in thread.participants}
@@ -224,6 +226,8 @@ class FakeInboxRepository:
                 reply_to_event_id=reply_to_event_id,
                 trace=trace or TraceMetadata(classification=thread.classification),
                 message_id=message_id,
+                on_behalf_of=on_behalf_of,
+                via=via,
             )
             if message_id is not None
             else Message(
@@ -236,6 +240,8 @@ class FakeInboxRepository:
                 event_id=event_id,
                 reply_to_event_id=reply_to_event_id,
                 trace=trace or TraceMetadata(classification=thread.classification),
+                on_behalf_of=on_behalf_of,
+                via=via,
             )
         )
         if message.trace.classification != thread.classification:
@@ -260,6 +266,8 @@ class FakeInboxRepository:
         trace: TraceMetadata | None = None,
         envelope: dict[str, object],
         join: bool = False,
+        on_behalf_of: str | None = None,
+        via: str | None = None,
     ) -> tuple[Message, ...]:
         snapshot = (
             copy.deepcopy(self.inboxes),
@@ -315,6 +323,8 @@ class FakeInboxRepository:
                         reply_to_event_id=reply_to_event_id,
                         trace=trace,
                         message_id=message_id,
+                        on_behalf_of=on_behalf_of,
+                        via=via,
                     )
                 )
             self.mail_outbox.setdefault(event_id, dict(envelope))

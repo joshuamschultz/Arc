@@ -303,6 +303,14 @@ def build_team_post_forwarder(*, service: Any, registry: Any) -> Any | None:
     return forward
 
 
+OPERATOR_MAIL_ENTITY = "user://operator"
+"""The deployment operator's mail identity: the signed transport sender of dashboard mail.
+
+Not attribution: the person and app ride in the message's signed ``on_behalf_of``
+/ ``via`` metadata (SPEC-087 D-827).
+"""
+
+
 async def _register_operator(registry: Any, op: _OperatorMessaging) -> None:
     """Register the operator as a signing USER entity once (audited by the registry)."""
     from arcteam.types import Entity, EntityType
@@ -312,7 +320,7 @@ async def _register_operator(registry: Any, op: _OperatorMessaging) -> None:
             Entity(
                 did=op.did,
                 handle="operator",
-                id="user://operator",
+                id=OPERATOR_MAIL_ENTITY,
                 name="Operator",
                 type=EntityType.USER,
                 public_key=op.public_key_hex,
@@ -390,6 +398,7 @@ async def _no_audience_warning(
 
 
 __all__ = [
+    "OPERATOR_MAIL_ENTITY",
     "TeamPostRefusedError",
     "build_agent_mail_service",
     "build_messaging_service",

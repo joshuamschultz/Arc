@@ -74,7 +74,7 @@ import {
   useRuns,
   useRoster,
 } from '@/lib/queries'
-import type { DurableInboxThread } from '@/lib/queries'
+import type { DurableInboxMessage, DurableInboxThread } from '@/lib/queries'
 import { ApprovalRequest } from '@/components/hitl'
 import { StatusChip, InsightStat } from '@/components/ai'
 import { KnowledgeOverview } from '@/components/knowledge-view/overview'
@@ -2005,6 +2005,34 @@ function ThreadParticipants({
   )
 }
 
+/** A DID cut to a readable prefix; the full DID stays in the tooltip. */
+const ATTRIBUTION_DID_CHARS = 32
+
+function AttributedDid({ did }: { did: string }) {
+  const label = did.length > ATTRIBUTION_DID_CHARS ? `${did.slice(0, ATTRIBUTION_DID_CHARS)}…` : did
+  return (
+    <span className="font-mono" title={did}>
+      {label}
+    </span>
+  )
+}
+
+/** 'from <person> via <app>': who a signed mail was sent for, and through which app.
+ *  Renders nothing when the mail names no person. */
+function MailAttribution({ message }: { message: DurableInboxMessage }) {
+  if (!message.on_behalf_of) return null
+  return (
+    <div className="mb-1 text-xs text-muted-foreground">
+      from <AttributedDid did={message.on_behalf_of} />
+      {message.via && (
+        <>
+          {' '}via <AttributedDid did={message.via} />
+        </>
+      )}
+    </div>
+  )
+}
+
 const THREAD_CLOSED_HINT = 'This mail has its reply. Continue in the team channel.'
 
 function composeErrorMessage(cause: unknown): string {
@@ -2329,6 +2357,7 @@ export function InboxTab({ agentId }: { agentId: string }) {
                               )}
                             </div>
                           </div>
+                          <MailAttribution message={message} />
                           <div className="whitespace-pre-wrap">{message.body}</div>
                           {(message.attachments ?? []).length > 0 && (
                             <div className="mt-2 font-mono text-xs text-muted-foreground">

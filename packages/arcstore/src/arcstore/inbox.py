@@ -143,6 +143,11 @@ class Message(_Contract):
     trace: TraceMetadata = Field(default_factory=TraceMetadata)
     created_at: datetime = Field(default_factory=_now)
     read_receipts: tuple[ReadReceipt, ...] = ()
+    #: The person the mail was sent for and the app that sent it, copied from
+    #: the signed transport envelope's meta (SPEC-087 D-827). ``None`` when the
+    #: sender acted for no named person / through no app.
+    on_behalf_of: str | None = Field(default=None, min_length=1)
+    via: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode="after")
     def _validate(self) -> Self:
@@ -281,6 +286,8 @@ class InboxRepository(Protocol):
         reply_to_event_id: str | None = None,
         trace: TraceMetadata | None = None,
         message_id: str | None = None,
+        on_behalf_of: str | None = None,
+        via: str | None = None,
     ) -> Message: ...
 
     async def record_event_with_outbox(
@@ -297,11 +304,15 @@ class InboxRepository(Protocol):
         trace: TraceMetadata | None = None,
         envelope: dict[str, object],
         join: bool = False,
+        on_behalf_of: str | None = None,
+        via: str | None = None,
     ) -> tuple[Message, ...]:
         """Persist every participant copy and the transport envelope atomically.
 
         ``join=True`` lets the sender enter an existing conversation: each
         existing copy's participants grow to include it, never shrink.
+        ``on_behalf_of`` / ``via`` are stored on every copy as given (the
+        caller copies them from the signed envelope meta).
         """
         ...
 

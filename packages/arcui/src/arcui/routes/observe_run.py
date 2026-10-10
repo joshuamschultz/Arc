@@ -18,12 +18,12 @@ import logging
 import re
 from typing import Any
 
-from arctrust.principals import Scope
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.acting import app_target_refusal, is_app
+from arcui.principals import Scope
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)

@@ -48,7 +48,14 @@ from arctrust.principal_auth import (
     verify_bearer,
     verify_signed,
 )
-from arctrust.principals import READ_SCOPES, WILDCARD, PrincipalStore, Scope, Tier
+from arctrust.principals import (
+    PRINCIPAL_ISSUE_TOOL,
+    READ_SCOPES,
+    WILDCARD,
+    PrincipalStore,
+    Scope,
+    Tier,
+)
 from arctrust.replay import ReplayCache
 from arctrust.users import OPERATOR
 from pydantic import BaseModel, ConfigDict, Field
@@ -613,10 +620,12 @@ __all__ = [
     "APP_ROUTES",
     "ENTERPRISE_REQUIRE_NAMED_DECIDER_DEFAULT",
     "HARD_DENIED_PREFIXES",
+    "PRINCIPAL_ISSUE_TOOL",
     "AppRoute",
     "PrincipalRateLimiter",
     "PrincipalsConfig",
     "RequestPrincipal",
+    "Scope",
     "authenticate_principal",
     "is_hard_denied",
     "is_principal_request",

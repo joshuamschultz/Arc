@@ -11,7 +11,10 @@ from arcteam.mail import MailSendRequest, MailThreadClosedError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.acting import control_refusal, mail_attribution
 from arcui.audit import emit_mutation_audit
+from arcui.messaging import OPERATOR_MAIL_ENTITY
+from arcui.principals import Scope
 from arcui.routes.agent_detail._common import _agent_did
 
 
@@ -229,21 +232,25 @@ def _compose_fields(payload: object) -> tuple[str | None, str] | str:
 async def post_inbox_compose(request: Request) -> JSONResponse:
     """Mail a new message from the operator to one agent (alpha-2 item 3).
 
-    Operator role only; the ``Idempotency-Key`` header makes a retried submit
-    return the same message instead of mailing twice. The mail is signed by the
-    operator key and wakes the agent; its one reply lands in the same thread.
+    An operator, or an app holding ``inbox:send`` for this agent. The
+    ``Idempotency-Key`` header makes a retried submit return the same message
+    instead of mailing twice. The mail is signed by the operator mail identity
+    (the transport sender) and wakes the agent; the person and the app it was
+    sent for ride in its signed meta (SPEC-087 D-827). Its one reply lands in
+    the same thread.
     """
     target = f"inbox:{request.path_params['id']}:compose"
-    if getattr(request.state, "role", None) != "operator":
-        emit_mutation_audit(
-            request,
-            target=target,
-            operation="inbox.compose",
-            outcome="denied",
-            detail="viewer role",
-        )
-        return JSONResponse({"error": "operator_role_required"}, status_code=403)
-    service, reader = _service(request), _reader(request)
+    reader = _reader(request)
+    refused = control_refusal(
+        request,
+        Scope.INBOX_SEND,
+        reader.participant_id if reader is not None else None,
+        target=target,
+        operation="inbox.compose",
+    )
+    if refused is not None:
+        return refused
+    service = _service(request)
     if service is None:
         return JSONResponse({"error": "durable_inbox_unavailable"}, status_code=503)
     sender = _operator_sender(service)
@@ -262,16 +269,19 @@ async def post_inbox_compose(request: Request) -> JSONResponse:
     idempotency_key = _idempotency_key(request)
     if idempotency_key is None:
         return JSONResponse({"error": "Idempotency-Key header is required"}, status_code=400)
+    on_behalf_of, via = mail_attribution(request)
     try:
         sent = await service.send(
             MailSendRequest(
-                sender="user://operator",
+                sender=OPERATOR_MAIL_ENTITY,
                 sender_did=sender.participant_id,
                 to=(reader.participant_id,),
                 subject=subject,
                 body=body,
                 idempotency_key=f"compose:{idempotency_key}",
                 classification=_clearance(request),
+                on_behalf_of=on_behalf_of,
+                via=via,
             )
         )
     except (KeyError, PermissionError, ValueError) as exc:

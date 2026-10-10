@@ -201,6 +201,20 @@ async def app_target_refusal(
     return control_refusal(request, scope, agent_did, target=target, operation=operation)
 
 
+def mail_attribution(request: Request) -> tuple[str | None, str | None]:
+    """The ``(on_behalf_of, via)`` pair signed into mail sent for this request.
+
+    A named person (session user, or the person an app acts for) is
+    ``on_behalf_of``; the app, whether alone or for a person, is ``via``. A
+    static token names neither. A header a person sends never changes this:
+    only :func:`acting_identity` decides.
+    """
+    identity = acting_identity(request)
+    person = identity.actor_did if identity.named_person else None
+    app = identity.via_app or (identity.actor_did if is_app(request) else None)
+    return person, app
+
+
 def _check_delegation(request: Request, identity: ActingIdentity, scope: Scope) -> Refusal | None:
     """None when the person delegated ``scope`` to this app and it is live now."""
     factory: Callable[[], PrincipalStore] | None = getattr(
@@ -253,4 +267,5 @@ __all__ = [
     "decider",
     "is_app",
     "is_control_allowed",
+    "mail_attribution",
 ]

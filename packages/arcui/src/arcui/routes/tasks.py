@@ -20,14 +20,21 @@ from typing import Any
 
 from arcstore.tasks import Task
 from arcteam.mail import MailSendRequest
-from arctrust.principals import Scope
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
-from arcui.acting import Refusal, acting_identity, control_refusal, decider
+from arcui.acting import (
+    Refusal,
+    acting_identity,
+    control_refusal,
+    decider,
+    mail_attribution,
+)
 from arcui.audit import emit_mutation_audit
+from arcui.messaging import OPERATOR_MAIL_ENTITY
+from arcui.principals import Scope
 from arcui.schemas import ErrorResponse
 
 _logger = logging.getLogger(__name__)
@@ -141,17 +148,20 @@ async def create_task(request: Request) -> JSONResponse:
         mail = getattr(request.app.state, "agent_mail", None)
         notification_status = "unavailable"
         if mail is not None:
+            on_behalf_of, via = mail_attribution(request)
             try:
                 result = await asyncio.wait_for(
                     mail.send(
                         MailSendRequest(
-                            sender="user://operator",
+                            sender=OPERATOR_MAIL_ENTITY,
                             sender_did=mail.sender_did,
                             to=(created.owner_did,),
                             subject="New task assigned",
                             body=f"Task {created.id}: {created.title}",
                             idempotency_key=f"task-created:{created.id}",
                             classification=created.classification,
+                            on_behalf_of=on_behalf_of,
+                            via=via,
                         )
                     ),
                     timeout=3.0,
