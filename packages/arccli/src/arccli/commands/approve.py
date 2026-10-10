@@ -175,6 +175,38 @@ async def _always(
     )
 
 
+async def _deny(store: ApprovalStore, row: PendingApproval) -> None:
+    """Deny ``row``; a denied principal issue also revokes the record it names."""
+    resolved = await store.resolve(
+        row.id, status="denied", actor_did="operator", resolved_by="operator"
+    )
+    _write(f"Denied {row.id}." if resolved else f"Could not deny {row.id}.")
+    if resolved is not None and row.tool == PRINCIPAL_ISSUE_TOOL:
+        await _revoke_principal(row)
+
+
+async def _approve_once(
+    store: ApprovalStore, row: PendingApproval, operator: OperatorApprovalAuthority
+) -> None:
+    """Mint an operator-signed grant over the stored call_hash and attach it.
+
+    The operator key IS the authority — the agent's gate verifies + pins to its DID.
+    """
+    grant = sign_approval_for_hash(row.call_hash, operator)
+    resolved = await store.resolve(
+        row.id,
+        status="approved",
+        actor_did=operator.did,
+        resolved_by=operator.did,
+        grant=grant_to_wire(grant),
+    )
+    if resolved is None:
+        _err(f"arc approve: {row.id!r} raced out of pending; not approved")
+        sys.exit(1)
+    who = row.agent_label or "agent"
+    _write(f"Approved {row.id} — {who} may proceed with {row.tool}.")
+
+
 def _resolve(args: argparse.Namespace) -> None:
     deny = bool(getattr(args, "deny", False))
     always = bool(getattr(args, "always", False))
@@ -198,12 +230,7 @@ def _resolve(args: argparse.Namespace) -> None:
             _print_context(row)
 
             if deny:
-                resolved = await store.resolve(
-                    args.id, status="denied", actor_did="operator", resolved_by="operator"
-                )
-                _write(f"Denied {args.id}." if resolved else f"Could not deny {args.id}.")
-                if resolved is not None and row.tool == PRINCIPAL_ISSUE_TOOL:
-                    await _revoke_principal(row)
+                await _deny(store, row)
                 return
 
             # SPEC-087: a principal issue row activates one app principal record.
@@ -228,21 +255,7 @@ def _resolve(args: argparse.Namespace) -> None:
                 await _always(store, backend, row, operator)
                 return
 
-            # Mint an operator-signed grant over the stored call_hash. The operator
-            # key IS the authority — the agent's gate verifies + pins to its DID.
-            grant = sign_approval_for_hash(row.call_hash, operator)
-            resolved = await store.resolve(
-                args.id,
-                status="approved",
-                actor_did=operator.did,
-                resolved_by=operator.did,
-                grant=grant_to_wire(grant),
-            )
-            if resolved is None:
-                _err(f"arc approve: {args.id!r} raced out of pending; not approved")
-                sys.exit(1)
-            who = row.agent_label or "agent"
-            _write(f"Approved {args.id} — {who} may proceed with {row.tool}.")
+            await _approve_once(store, row, operator)
         finally:
             await backend.stop()
 

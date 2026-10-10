@@ -12,19 +12,22 @@ authenticated NaCl SecretBox so tampering is cryptographically detected, not sim
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
+import os
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import pytest
-from arctrust.sealed_state import AuthorityStateError, SealedAuthorityState
 from nacl.secret import SecretBox
 
-from arctrust import FileJournalAnchor, InProcessSigner
+from arctrust import FileJournalAnchor, InProcessSigner, sealed_state
 from arctrust.audit import AuditEvent
-from arctrust.monotonic import MonotonicAnchor
+from arctrust.monotonic import AnchorHead, MonotonicAnchor
+from arctrust.sealed_state import AuthorityStateError, SealedAuthorityState
 from arctrust.users import UserStoreError
 
 _ACTOR = "did:arc:test:user/sealed-state-actor"
@@ -489,3 +492,250 @@ def test_sealed_state_strict_commit_audit_failure_reports_uncertain_outcome(rig)
     assert rig.anchor.latest() is not None
     rig.strict.fail_on = None
     assert rig.open().load() == _payload(1)
+
+
+# --- compromised or lagging anchor (external custody boundary) -------------------
+
+
+class ForeignScopeAnchor:
+    """Claims one scope but serves heads journaled under another."""
+
+    def __init__(self, real: FileJournalAnchor, claimed_scope: str) -> None:
+        self._real = real
+        self._claimed = claimed_scope
+
+    @property
+    def scope(self) -> str:
+        return self._claimed
+
+    def latest(self) -> AnchorHead | None:
+        return self._real.latest()
+
+    def compare_and_advance(
+        self, expected: AnchorHead | None, digest: str, intent: str
+    ) -> AnchorHead:
+        return self._real.compare_and_advance(expected, digest, intent)
+
+
+class LaggingAnchor:
+    """Accepts an advance but keeps reporting the head from before it."""
+
+    def __init__(self, real: FileJournalAnchor) -> None:
+        self._real = real
+        self._frozen: AnchorHead | None = None
+        self.lag = False
+
+    @property
+    def scope(self) -> str:
+        return self._real.scope
+
+    def latest(self) -> AnchorHead | None:
+        return self._frozen if self.lag else self._real.latest()
+
+    def compare_and_advance(
+        self, expected: AnchorHead | None, digest: str, intent: str
+    ) -> AnchorHead:
+        self._frozen = self._real.latest()
+        return self._real.compare_and_advance(expected, digest, intent)
+
+
+def _advance_raw(rig: Rig, plaintext: bytes, *, intent: str | None = None) -> None:
+    """Anchor a revision directly, as a writer that crashed before its local write would."""
+    sealed = rig.cipher.seal(plaintext)
+    rig.anchor.compare_and_advance(
+        rig.anchor.latest(),
+        _sha256(sealed.encode("ascii")),
+        sealed if intent is None else intent,
+    )
+
+
+def test_sealed_state_head_from_another_scope_is_refused(rig, tmp_path):
+    foreign = _anchor(tmp_path / "foreign-anchor", scope="test/other-record")
+    writer = rig.open(anchor=foreign)
+    writer.load()
+    writer.save(_payload(1))
+    liar = ForeignScopeAnchor(foreign, claimed_scope="test/principals")
+    with pytest.raises(AuthorityStateError, match="anchor scope mismatch"):
+        rig.open(anchor=liar).load()
+
+
+def test_sealed_state_anchor_that_does_not_report_the_advance_refuses_the_write(rig):
+    lagging = LaggingAnchor(rig.anchor)
+    state = rig.open(anchor=lagging)
+    state.load()
+    lagging.lag = True
+    with pytest.raises(AuthorityStateError, match="advanced before local write"):
+        state.save(_payload(1))
+    assert not rig.path.exists()
+
+
+# --- recovery-intent refusals ----------------------------------------------------
+
+
+def test_sealed_state_anchored_non_object_record_is_refused(rig):
+    _advance_raw(rig, b"[1,2,3]")
+    with pytest.raises(AuthorityStateError, match="malformed"):
+        rig.open().load()
+
+
+def test_sealed_state_anchored_non_json_record_is_refused(rig):
+    _advance_raw(rig, b"not json")
+    with pytest.raises(AuthorityStateError, match="cannot read"):
+        rig.open().load()
+
+
+def test_sealed_state_missing_file_without_recovery_intent_is_refused(rig):
+    _advance_raw(rig, b"{}", intent="")
+    with pytest.raises(AuthorityStateError, match="recovery intent absent"):
+        rig.open().load()
+    assert not rig.path.exists()
+
+
+def test_sealed_state_recovery_intent_that_does_not_match_the_digest_is_refused(rig):
+    forged = rig.cipher.seal(b'{"secret":"attacker"}')
+    _advance_raw(rig, b"{}", intent=forged)
+    with pytest.raises(AuthorityStateError, match="recovery intent invalid"):
+        rig.open().load()
+    assert not rig.path.exists()
+
+
+def test_sealed_state_recovery_write_that_did_not_land_is_refused(rig, monkeypatch):
+    _advance_raw(rig, b"{}")
+    monkeypatch.setattr(os, "replace", lambda *args, **kwargs: None)
+    with pytest.raises(AuthorityStateError, match="recovery failed"):
+        rig.open().load()
+
+
+def test_sealed_state_recovery_that_leaves_the_old_file_is_refused(rig, monkeypatch):
+    state = rig.open()
+    state.load()
+    state.save(_payload(1))
+    previous = rig.path.read_bytes()
+    state.save(_payload(2))
+    rig.path.write_bytes(previous)
+    monkeypatch.setattr(os, "replace", lambda *args, **kwargs: None)
+    with pytest.raises(AuthorityStateError, match="integrity mismatch"):
+        rig.open().load()
+
+
+# --- write failure after the anchor advanced -----------------------------------
+
+
+def test_sealed_state_failed_local_write_is_uncertain_and_recovered_on_next_load(rig):
+    state = rig.open()
+    state.load()
+    rig.path.parent.chmod(0o500)
+    try:
+        with pytest.raises(AuthorityStateError, match="write outcome is uncertain"):
+            state.save(_payload(1))
+    finally:
+        rig.path.parent.chmod(0o700)
+    assert rig.anchor.latest() is not None
+    assert rig.open().load() == _payload(1)
+
+
+# --- lock and directory refusals -------------------------------------------------
+
+
+def test_sealed_state_instance_busy_beyond_the_timeout_is_refused(rig, monkeypatch):
+    monkeypatch.setattr(sealed_state, "_LOCK_TIMEOUT_SECONDS", 0.2)
+    blocking = BlockingCipher()
+    state = rig.open(cipher=blocking)
+    state.load()
+    holder = threading.Thread(target=lambda: state.save(_payload(1)))
+    holder.start()
+    try:
+        assert blocking.entered.wait(5)
+        with pytest.raises(AuthorityStateError, match="instance is busy"):
+            state.load()
+    finally:
+        blocking.release.set()
+        holder.join(5)
+
+
+def test_sealed_state_record_lock_held_elsewhere_is_refused(rig, monkeypatch):
+    monkeypatch.setattr(sealed_state, "_LOCK_TIMEOUT_SECONDS", 0.1)
+    rig.open().load()
+    lock_fd = os.open(rig.path.parent / ".principals.lock", os.O_RDWR)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        with pytest.raises(AuthorityStateError, match="lock is busy"):
+            rig.open().load()
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+
+
+def test_sealed_state_symlinked_directory_is_refused(rig, tmp_path):
+    link = tmp_path / "state-link"
+    link.symlink_to(rig.path.parent)
+    via_link = Rig(
+        path=link / "principals.json",
+        anchor=rig.anchor,
+        cipher=rig.cipher,
+        audit=rig.audit,
+        strict=rig.strict,
+    )
+    with pytest.raises(AuthorityStateError, match="directory is a symlink"):
+        via_link.open().load()
+
+
+def test_sealed_state_group_readable_directory_is_refused(rig):
+    rig.path.parent.chmod(0o750)
+    with pytest.raises(AuthorityStateError, match="directory is not private"):
+        rig.open().load()
+
+
+def test_sealed_state_world_readable_lock_is_refused(rig):
+    rig.open().load()
+    (rig.path.parent / ".principals.lock").chmod(0o644)
+    with pytest.raises(AuthorityStateError, match="lock is not private"):
+        rig.open().load()
+
+
+def _swap_directory_during_save(rig: Rig, swap: Callable[[Path], None]) -> list[BaseException]:
+    """Pause a save under the record lock, run ``swap`` on its directory, then let it finish."""
+    blocking = BlockingCipher()
+    state = rig.open(cipher=blocking)
+    state.load()
+    errors: list[BaseException] = []
+
+    def writer() -> None:
+        try:
+            state.save(_payload(1))
+        except Exception as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=writer)
+    thread.start()
+    try:
+        assert blocking.entered.wait(5)
+        swap(rig.path.parent)
+    finally:
+        blocking.release.set()
+        thread.join(5)
+    return errors
+
+
+def test_sealed_state_directory_swapped_for_a_symlink_mid_save_is_refused(rig, tmp_path):
+    moved = tmp_path / "state-moved"
+
+    def to_symlink(directory: Path) -> None:
+        directory.rename(moved)
+        directory.symlink_to(moved)
+
+    errors = _swap_directory_during_save(rig, to_symlink)
+    assert len(errors) == 1 and isinstance(errors[0], AuthorityStateError)
+    assert "directory changed" in str(errors[0])
+    assert rig.anchor.latest() is None
+
+
+def test_sealed_state_directory_replaced_mid_save_is_refused(rig, tmp_path):
+    def to_new_directory(directory: Path) -> None:
+        directory.rename(tmp_path / "state-moved")
+        _private_dir(directory)
+
+    errors = _swap_directory_during_save(rig, to_new_directory)
+    assert len(errors) == 1 and isinstance(errors[0], AuthorityStateError)
+    assert "directory changed" in str(errors[0])
+    assert rig.anchor.latest() is None

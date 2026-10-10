@@ -22,7 +22,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from arcstore.approvals import ApprovalStore
+from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.standing_grants import StandingGrantRefusedError, approve_always
 from arctrust import operator_signer_for
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
@@ -291,6 +291,38 @@ async def acknowledge_notification(request: Request) -> JSONResponse:
     return JSONResponse({"acknowledged": True, "event_id": event_id})
 
 
+async def _apply_tool_effect(
+    request: Request, row: PendingApproval, target: str, actor_did: str
+) -> JSONResponse | None:
+    """Run the side effect an approval carries beyond its grant; a refusal response or None.
+
+    A workflow-signing request is the one approval whose grant is not the
+    whole effect: approving it SIGNS the bundle. The signature happens here,
+    in the operator-authenticated path, and never through the control plane —
+    the operation set an agent can reach must stay one that cannot sign
+    (REQ-224). The row's call_hash is the definition's content hash, so a
+    definition edited since the request no longer matches and is refused.
+
+    SPEC-087 COMP-010: an app principal issue row activates the pending record
+    it names, only while that record still hashes to the row's call_hash.
+    """
+    if row.tool == WORKFLOW_SIGN_TOOL:
+        signed = _sign_requested_workflow(request, row)
+        if signed is None:
+            return None
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="approval.approve",
+            outcome="denied",
+            detail=signed,
+        )
+        return _error(signed, 409)
+    if row.tool == PRINCIPAL_ISSUE_TOOL:
+        return await activate_for_approval(request, row, actor_did)
+    return None
+
+
 async def approve_request(request: Request) -> JSONResponse:
     """POST /api/approvals/{id}/approve — mint + attach an operator grant."""
     approval_id = request.path_params["id"]
@@ -332,30 +364,9 @@ async def approve_request(request: Request) -> JSONResponse:
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
 
-    # A workflow-signing request is the one approval whose grant is not the
-    # whole effect: approving it SIGNS the bundle. The signature happens here,
-    # in the operator-authenticated path, and never through the control plane —
-    # the operation set an agent can reach must stay one that cannot sign
-    # (REQ-224). The row's call_hash is the definition's content hash, so a
-    # definition edited since the request no longer matches and is refused.
-    if row.tool == WORKFLOW_SIGN_TOOL:
-        signed = _sign_requested_workflow(request, row)
-        if signed is not None:
-            emit_mutation_audit(
-                request,
-                target=target,
-                operation="approval.approve",
-                outcome="denied",
-                detail=signed,
-            )
-            return _error(signed, 409)
-
-    # SPEC-087 COMP-010: an app principal issue row activates the pending record
-    # it names, only while that record still hashes to the row's call_hash.
-    if row.tool == PRINCIPAL_ISSUE_TOOL:
-        refused = await activate_for_approval(request, row, decided.actor_did)
-        if refused is not None:
-            return refused
+    refused = await _apply_tool_effect(request, row, target, decided.actor_did)
+    if refused is not None:
+        return refused
 
     grant = sign_approval_for_hash(row.call_hash, operator)
     updated = await store.resolve(

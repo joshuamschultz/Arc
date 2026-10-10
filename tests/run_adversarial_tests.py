@@ -925,6 +925,20 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
         "packages/arcbundle/tests/unit/test_admin.py",
         "packages/arcagent/tests/unit/test_keys.py",
     ),
+    # SPEC-087 (app principals): a replayed signed request, a bearer reused after
+    # revoke, a signature over a swapped body, path, method or on-behalf-of header, a
+    # stale or future timestamp, app A signing as app B, scope escalation (runs:read
+    # calling the gate route, no gates:resolve), an agent outside the binding (inbox,
+    # workflow run, run read, run timeline), a forged on-behalf-of (unknown, disabled or
+    # not allowlisted person, refused identically), an app for a viewer writing tasks,
+    # an app on approvals/users/principals/delegations/standing grants/trust/signing
+    # routes whatever it holds, a federal decision without the person's delegation, a
+    # restored older principals file (fails closed for every app; sessions still work),
+    # rate-limit exhaustion and an unreachable authority (503, never a fallback). Every
+    # refusal writes exactly one audit row; no secret or signature reaches a log or row.
+    "app principal abuse (ASI03, ASI07)": (
+        "packages/arcui/tests/security/test_app_principal_abuse.py",
+    ),
 }
 
 
