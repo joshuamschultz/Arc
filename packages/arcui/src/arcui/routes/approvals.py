@@ -417,7 +417,9 @@ async def always_allow_request(request: Request) -> JSONResponse:
         logger.exception("operator key unavailable for standing approval")
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
     try:
-        resolved, stored = await approve_always(store, standing_store(request), row, operator)
+        resolved, stored = await approve_always(
+            store, standing_store(request), row, operator, resolved_by=decided.actor_did
+        )
     except StandingGrantRefusedError as exc:
         emit_mutation_audit(
             request,
