@@ -6,29 +6,39 @@ from datetime import UTC, datetime
 
 
 class ReplayCache:
-    """Sliding-window nonce cache. Rejects replays and stale timestamps."""
+    """Sliding-window nonce cache. Rejects replays and stale timestamps.
+
+    A nonce is remembered until its own timestamp can no longer pass the
+    freshness check (``max(arrival, ts) + window``). Pruning by arrival time
+    alone would forget a future-stamped nonce while its ``ts`` is still fresh,
+    reopening a replay for that request.
+    """
 
     def __init__(self, window_seconds: float = 300.0) -> None:
         self._window = window_seconds
-        self._seen: dict[str, datetime] = {}
+        # nonce -> POSIX time after which the entry may be forgotten.
+        self._forget_after: dict[str, float] = {}
 
-    def _prune(self, now: datetime) -> None:
-        cutoff = now.timestamp() - self._window
-        expired = [n for n, t in self._seen.items() if t.timestamp() < cutoff]
+    def __len__(self) -> int:
+        """Number of nonces currently remembered (memory observability)."""
+        return len(self._forget_after)
+
+    def _prune(self, now: float) -> None:
+        expired = [n for n, until in self._forget_after.items() if until < now]
         for nonce in expired:
-            del self._seen[nonce]
+            del self._forget_after[nonce]
 
     def check_and_record(self, nonce: str, ts: str) -> bool:
         """Return True if first-seen and fresh; False for replay or stale ``ts``."""
-        now = datetime.now(UTC)
+        now = datetime.now(UTC).timestamp()
         self._prune(now)
         try:
-            sent_at = datetime.fromisoformat(ts)
+            sent_at = datetime.fromisoformat(ts).timestamp()
         except ValueError:
             return False
-        if now.timestamp() - sent_at.timestamp() > self._window:
+        if now - sent_at > self._window:
             return False
-        if nonce in self._seen:
+        if nonce in self._forget_after:
             return False
-        self._seen[nonce] = now
+        self._forget_after[nonce] = max(now, sent_at) + self._window
         return True

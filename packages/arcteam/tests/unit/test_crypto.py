@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 from arctrust import AgentIdentity, ReplayCache, generate_keypair
@@ -99,14 +100,24 @@ class TestReplayCache:
         old = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
         assert cache.check_and_record(new_nonce(), old) is False
 
-    def test_expired_nonce_pruned_allows_reuse(self) -> None:
+    def test_expired_nonce_pruned_allows_reuse(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import arctrust.replay as replay_module
+
+        start = datetime.now(UTC)
+        current = [start]
+
+        class _Clock(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]  # fake clock keeps datetime's signature
+                return current[0] if tz is None else current[0].astimezone(tz)
+
+        monkeypatch.setattr(replay_module, "datetime", _Clock)
         cache = ReplayCache(window_seconds=1)
         nonce = new_nonce()
-        recent = datetime.now(UTC).isoformat()
-        assert cache.check_and_record(nonce, recent) is True
-        # An entry older than the window is pruned, not treated as a live replay.
-        cache._seen[nonce] = datetime.now(UTC) - timedelta(seconds=5)
-        assert cache.check_and_record(nonce, datetime.now(UTC).isoformat()) is True
+        assert cache.check_and_record(nonce, start.isoformat()) is True
+        # Once the entry's own ts is past the window it is pruned, not a live replay.
+        current[0] = start + timedelta(seconds=5)
+        assert cache.check_and_record(nonce, current[0].isoformat()) is True
 
     def test_malformed_timestamp_rejected(self) -> None:
         cache = ReplayCache(window_seconds=60)

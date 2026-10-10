@@ -242,6 +242,11 @@ from arctrust.policy import (
     verify_interactive_grant,
     verify_scenario_grant,
 )
+from arctrust.principal_auth import (
+    AuthenticatedPrincipal,
+    PrincipalRejected,
+    SignedRequest,
+)
 from arctrust.principals import (
     Delegation,
     Principal,
@@ -464,6 +469,7 @@ __all__ = [
     "ArtifactSignature",
     "AuditEvent",
     "AuditSink",
+    "AuthenticatedPrincipal",
     "AuthorityConfigError",
     "BootstrapAuthority",
     "BrokerQueueByteCipher",
@@ -520,6 +526,7 @@ __all__ = [
     "PolicyLayer",
     "PolicyPipeline",
     "Principal",
+    "PrincipalRejected",
     "PrincipalStore",
     "PrincipalStoreError",
     "QueueBrokerAnchor",
@@ -532,6 +539,7 @@ __all__ = [
     "ScenarioGrant",
     "Scope",
     "SignedControlRevision",
+    "SignedRequest",
     "Signer",
     "SignerConfig",
     "SignerError",

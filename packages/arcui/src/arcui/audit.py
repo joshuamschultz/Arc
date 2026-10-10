@@ -97,12 +97,14 @@ class MutationAuditFields(BaseModel):
     SPEC-087 COMP-007: ``actor_did`` names WHO acted (a signed-in account's DID,
     or the session pseudo-DID for a static token) so two people sharing a role
     never collapse into one row; ``on_behalf_of`` names the person an app acted
-    for, ``None`` when the actor acted for itself.
+    for, ``None`` when the actor acted for itself; ``via_app`` names the app DID
+    when an app acted for that person (REQ-565/566: the row names both).
     """
 
     actor_role: str
     actor_did: str
     on_behalf_of: str | None = None
+    via_app: str | None = None
     session_id: str
     target: str
     operation: str
@@ -272,6 +274,7 @@ class MutationWormWriter:
                     "actor_role": fields.actor_role,
                     "acting_did": fields.actor_did,
                     "on_behalf_of": fields.on_behalf_of,
+                    "via_app": fields.via_app,
                     "detail": fields.detail,
                 },
             )
@@ -296,11 +299,16 @@ def ui_session_actor(request: Any) -> str:
 def _request_audit_fields(
     request: Any, *, target: str, operation: str, outcome: str, detail: str
 ) -> MutationAuditFields:
-    """Attribute one audit row to the request's actor (role, session, DID, person)."""
+    """Attribute one audit row to the request's actor (role, session, DID, person, app)."""
+    # Lazy: arcui.acting imports this module (via arcui.principals too).
+    from arcui.acting import acting_identity
+
+    identity = acting_identity(request)
     return MutationAuditFields(
         actor_role=getattr(request.state, "role", None) or "unknown",
-        actor_did=ui_session_actor(request),
-        on_behalf_of=getattr(request.state, "on_behalf_of", None),
+        actor_did=identity.actor_did,
+        on_behalf_of=identity.on_behalf_of,
+        via_app=identity.via_app,
         session_id=getattr(request.state, "session_id", None) or "unknown",
         target=target,
         operation=operation,

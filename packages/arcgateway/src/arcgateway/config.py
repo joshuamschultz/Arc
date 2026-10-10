@@ -103,6 +103,9 @@ class UiSection(BaseModel):
     public_base_url: str | None = None
     # Log the event loop's p50/p99/max lag once a minute (arcui.loop_lag).
     loop_lag_monitor: bool = False
+    # [ui.principals] (SPEC-087): app-principal settings, kept raw here and
+    # validated by arcui.principals.PrincipalsConfig when the dashboard starts.
+    principals: dict[str, Any] = Field(default_factory=dict)
 
 
 class SecuritySection(BaseModel):
