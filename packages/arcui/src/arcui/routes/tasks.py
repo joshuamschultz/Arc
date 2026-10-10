@@ -20,17 +20,17 @@ from typing import Any
 
 from arcstore.tasks import Task
 from arcteam.mail import MailSendRequest
+from arctrust.principals import Scope
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from arcui.acting import Refusal, acting_identity, decider, is_control_allowed
 from arcui.audit import emit_mutation_audit
+from arcui.principals import SCOPE_DENIED
 from arcui.schemas import ErrorResponse
 
-# arcui holds no agent identity; operator-originated writes are attributed to
-# this fixed DID (mirrors `_CALLER_DID` in agent_detail/_common.py).
-_CREATOR = "did:arc:ui:operator"
 _logger = logging.getLogger(__name__)
 
 _CREATE_FIELDS = ("description", "priority", "owner_did", "tags", "requires_review")
@@ -54,7 +54,9 @@ def _first_error_message(exc: ValidationError) -> str:
     return f"{loc}: {msg}"
 
 
-def _valid_edits(task_id: str, edits: dict[str, Any], *, allow_external_refs: bool) -> str | None:
+def _valid_edits(
+    task_id: str, edits: dict[str, Any], *, actor_did: str, allow_external_refs: bool
+) -> str | None:
     """Validate patched fields through the ``Task`` model (SEC-F2).
 
     A partial patch never constructs a full ``Task``, so it would otherwise
@@ -62,7 +64,7 @@ def _valid_edits(task_id: str, edits: dict[str, Any], *, allow_external_refs: bo
     task carrying the edited values and let the model's field validators run.
     Returns ``None`` when the patch is safe, else the client-facing reason.
     """
-    probe: dict[str, Any] = {"id": task_id, "creator_did": _CREATOR, "title": "probe"}
+    probe: dict[str, Any] = {"id": task_id, "creator_did": actor_did, "title": "probe"}
     probe.update(edits)
     try:
         Task.model_validate(probe, context={"allow_external_refs": allow_external_refs})
@@ -85,7 +87,30 @@ def _error(message: str, status: int) -> JSONResponse:
 
 
 def _is_operator(request: Request) -> bool:
+    """Operator check for the task routes an app can never reach (the middleware refuses it)."""
     return getattr(request.state, "role", None) == "operator"
+
+
+def _tasks_write_refusal(
+    request: Request, agent_did: str | None, *, target: str, operation: str
+) -> JSONResponse | None:
+    """None when the caller may write tasks owned by ``agent_did``; else an audited 403.
+
+    Operators pass; an app needs ``tasks:write`` bound to the task's owner agent
+    and, acting for a person, a person who could do it themselves (REQ-562).
+    An unowned task binds no agent, so an app is refused.
+    """
+    if is_control_allowed(request, Scope.TASKS_WRITE, agent_did):
+        return None
+    if getattr(request.state, "role", None) == "app":
+        code = SCOPE_DENIED
+        detail = f"{SCOPE_DENIED} scope={Scope.TASKS_WRITE.value} agent={agent_did}"
+    else:
+        code, detail = "operator_role_required", "viewer role"
+    emit_mutation_audit(
+        request, target=target, operation=operation, outcome="denied", detail=detail
+    )
+    return _error(code, 403)
 
 
 async def _json_body(request: Request) -> dict[str, Any] | None:
@@ -97,25 +122,25 @@ async def _json_body(request: Request) -> dict[str, Any] | None:
 
 
 async def create_task(request: Request) -> JSONResponse:
-    """POST /api/team/tasks — create a task (operator only)."""
-    if not _is_operator(request):
-        emit_mutation_audit(
-            request,
-            target="task:new",
-            operation="task.create",
-            outcome="denied",
-            detail="viewer role",
-        )
-        return _error("operator_role_required", 403)
-
+    """POST /api/team/tasks — create a task (operator, or an app bound to the owner agent)."""
     body = await _json_body(request)
+    owner = (body or {}).get("owner_did")
+    refused = _tasks_write_refusal(
+        request,
+        owner if isinstance(owner, str) else None,
+        target="task:new",
+        operation="task.create",
+    )
+    if refused is not None:
+        return refused
     if body is None:
         return _error("expected a JSON object body", 400)
     title = body.get("title")
     if not isinstance(title, str) or not title.strip():
         return _error("missing or blank title", 400)
 
-    fields: dict[str, Any] = {"id": str(uuid.uuid4()), "title": title, "creator_did": _CREATOR}
+    creator = acting_identity(request).actor_did
+    fields: dict[str, Any] = {"id": str(uuid.uuid4()), "title": title, "creator_did": creator}
     for key in _CREATE_FIELDS:
         if key in body:
             fields[key] = body[key]
@@ -186,12 +211,15 @@ async def patch_task(request: Request) -> JSONResponse:
     edits = {key: body[key] for key in _PATCH_FIELDS if key in body}
     if not edits:
         return _error("no editable fields", 400)
-    reason = _valid_edits(task_id, edits, allow_external_refs=_allow_external_refs(request))
+    actor = acting_identity(request).actor_did
+    reason = _valid_edits(
+        task_id, edits, actor_did=actor, allow_external_refs=_allow_external_refs(request)
+    )
     if reason is not None:
         return _error(reason, 400)
 
     store = request.app.state.task_store
-    updated, outcome = await store.edit(task_id, edits, actor_did=_CREATOR)
+    updated, outcome = await store.edit(task_id, edits, actor_did=actor)
     if outcome == "not_found":
         return _error("not found", 404)
     if outcome in ("in_progress", "conflict"):
@@ -229,7 +257,7 @@ async def delete_task(request: Request) -> Response:
         return _error("operator_role_required", 403)
 
     store = request.app.state.task_store
-    existed = await store.delete(task_id, actor_did=_CREATOR)
+    existed = await store.delete(task_id, actor_did=acting_identity(request).actor_did)
     if not existed:
         return _error("not found", 404)
 
@@ -258,7 +286,7 @@ async def cancel_task(request: Request) -> Response:
     store = request.app.state.task_store
     if await store.get(task_id) is None:
         return _error("not found", 404)
-    updated = await store.request_cancel(task_id, actor_did=_CREATOR)
+    updated = await store.request_cancel(task_id, actor_did=acting_identity(request).actor_did)
     if updated is None:
         emit_mutation_audit(
             request, target=target, operation="task.cancel", outcome="denied", detail="not_running"
@@ -294,7 +322,7 @@ async def move_task(request: Request) -> Response:
     store = request.app.state.task_store
     if await store.get(task_id) is None:
         return _error("not found", 404)
-    updated = await store.set_status(task_id, status, actor_did=_CREATOR)
+    updated = await store.set_status(task_id, status, actor_did=acting_identity(request).actor_did)
     if updated is None:
         emit_mutation_audit(
             request, target=target, operation="task.move", outcome="denied", detail=status
@@ -310,18 +338,15 @@ async def move_task(request: Request) -> Response:
 async def _review_decision(request: Request, *, approve: bool) -> Response:
     """Shared body for the review gate's approve/reject routes (P3).
 
-    Operator-gated; a task must be in ``review`` (409 otherwise) — approve moves
-    it to ``done``, reject back to ``todo`` for re-dispatch. 404 if missing.
+    A task must be in ``review`` (409 otherwise) — approve moves it to ``done``,
+    reject back to ``todo`` for re-dispatch. 404 if missing (an app never
+    learns more than that). The caller needs ``tasks:write`` on the task's owner
+    agent, and the decision is recorded under :func:`decider`'s identity
+    (federal needs a named person, and an app a live delegation).
     """
     task_id = request.path_params["id"]
     operation = "task.approve" if approve else "task.reject"
     target = f"task:{task_id}"
-
-    if not _is_operator(request):
-        emit_mutation_audit(
-            request, target=target, operation=operation, outcome="denied", detail="viewer role"
-        )
-        return _error("operator_role_required", 403)
 
     store = request.app.state.task_store
     task = await store.get(task_id)
@@ -335,12 +360,24 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     # nothing". Gate resolution belongs to the runner's control plane, so it is
     # relayed there rather than flipped in the task store here.
     if str(task.metadata.get("node_kind", "")) == "gate":
+        if not _is_operator(request):
+            emit_mutation_audit(
+                request, target=target, operation=operation, outcome="denied", detail="viewer role"
+            )
+            return _error("operator_role_required", 403)
         return await _resolve_gate(request, task_id, approve=approve, target=target)
 
+    refused = _tasks_write_refusal(request, task.owner_did, target=target, operation=operation)
+    if refused is not None:
+        return refused
+    identity = await asyncio.to_thread(decider, request, Scope.TASKS_WRITE)
+    if isinstance(identity, Refusal):
+        return JSONResponse({"error": identity.code}, status_code=identity.status)
+
     updated = (
-        await store.approve_review(task_id, actor_did=_CREATOR)
+        await store.approve_review(task_id, actor_did=identity.actor_did)
         if approve
-        else await store.reject_review(task_id, actor_did=_CREATOR)
+        else await store.reject_review(task_id, actor_did=identity.actor_did)
     )
     if updated is None:
         emit_mutation_audit(

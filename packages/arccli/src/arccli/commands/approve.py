@@ -35,6 +35,7 @@ from arcstore.standing_grants import (
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 
 from arccli.commands._shared import write as _write
+from arccli.commands.principal import PRINCIPAL_ISSUE_TOOL
 from arccli.formatting import print_table as _print_table
 
 if TYPE_CHECKING:
@@ -201,6 +202,13 @@ def _resolve(args: argparse.Namespace) -> None:
                     args.id, status="denied", actor_did="operator", resolved_by="operator"
                 )
                 _write(f"Denied {args.id}." if resolved else f"Could not deny {args.id}.")
+                if resolved is not None and row.tool == PRINCIPAL_ISSUE_TOOL:
+                    await _revoke_principal(row)
+                return
+
+            # SPEC-087: a principal issue row activates one app principal record.
+            if row.tool == PRINCIPAL_ISSUE_TOOL:
+                await _approve_principal(store, row, always=always)
                 return
 
             from arccli.commands.operator import resolve_operator_signer
@@ -239,6 +247,87 @@ def _resolve(args: argparse.Namespace) -> None:
             await backend.stop()
 
     asyncio.run(_run())
+
+
+def _principal_id(row: PendingApproval) -> str:
+    principal_id = row.arguments.get("principal_id", "")
+    if not principal_id:
+        _err(f"arc approve: {row.id!r} names no principal")
+        sys.exit(1)
+    return principal_id
+
+
+def _refuse_federal_principal(row: PendingApproval) -> None:
+    """REQ-554 at the CLI: the deployment key is not a person, so the two-person
+    rule cannot be checked here. Audit the refusal and send the operator to the
+    dashboard, where the approver is a signed-in person."""
+    from arctrust import AuditEvent
+
+    from arccli.commands._shared import audit_chain
+    from arccli.commands.operator import operator_signer_and_did
+
+    with audit_chain("arc approve", lambda: operator_signer_and_did()[0]) as (sink, actor):
+        sink.write(
+            AuditEvent(
+                actor_did=actor,
+                action="principal.activate",
+                target=row.arguments.get("principal_id", row.id),
+                outcome="deny",
+                tier="federal",
+                extra={"reason": "two_person_rule_cli", "approval_id": row.id},
+            )
+        )
+    _err(
+        f"arc approve: {row.id!r} is a federal app principal request; it needs a second "
+        "person. Approve it in the dashboard (Approvals), signed in as an operator other "
+        "than the requester."
+    )
+    sys.exit(1)
+
+
+async def _approve_principal(store: ApprovalStore, row: PendingApproval, *, always: bool) -> None:
+    """Activate the principal a ``principal_issue`` row names (SPEC-087 COMP-010).
+
+    The record is activated first: the store re-reads it and refuses (audited)
+    unless it is still pending and hashes to the row's ``call_hash``. If the row
+    then races out of pending (a concurrent deny), the record is revoked again.
+    """
+    from arccli.commands.operator import resolve_operator_signer
+    from arccli.commands.principal import activate_requested, deployment_tier, revoke_requested
+
+    if always:
+        _err("arc approve: --always does not apply to an app principal request")
+        sys.exit(1)
+    if deployment_tier() == "federal":
+        _refuse_federal_principal(row)
+    principal_id = _principal_id(row)
+    operator = OperatorApprovalAuthority(resolve_operator_signer())
+    principal = await asyncio.to_thread(
+        activate_requested, principal_id, row.call_hash, operator.did
+    )
+    resolved = await store.resolve(
+        row.id,
+        status="approved",
+        actor_did=operator.did,
+        resolved_by=operator.did,
+        grant=grant_to_wire(sign_approval_for_hash(row.call_hash, operator)),
+    )
+    if resolved is None:
+        await asyncio.to_thread(revoke_requested, principal_id, operator.did)
+        _err(f"arc approve: {row.id!r} raced out of pending; principal {principal_id} revoked")
+        sys.exit(1)
+    _write(f"Approved {row.id} — app principal {principal.name} ({principal.id}) is active.")
+
+
+async def _revoke_principal(row: PendingApproval) -> None:
+    """A denied ``principal_issue`` row revokes the pending record it names."""
+    from arccli.commands.operator import operator_signer_and_did
+    from arccli.commands.principal import revoke_requested
+
+    principal_id = _principal_id(row)
+    actor_did = operator_signer_and_did()[0]
+    await asyncio.to_thread(revoke_requested, principal_id, actor_did)
+    _write(f"Revoked app principal {principal_id}.")
 
 
 async def _approve_enrollment(

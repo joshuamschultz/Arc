@@ -20,6 +20,7 @@ from starlette.testclient import TestClient
 
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.principals import PrincipalsConfig
 
 _AGENT = "did:arc:local:executor/c0bef560"
 _GONE = "This request expired; the agent has moved on"
@@ -65,6 +66,7 @@ class _Box:
         app.add_middleware(AuthMiddleware, auth_config=self.auth)
         app.state.auth_config = self.auth
         app.state.audit = UIAuditLogger(enabled=False)
+        app.state.principals_config = PrincipalsConfig(tier="personal")
         app.state.approval_store = self.approvals
         app.state.standing_grant_store = self.standing
         self.client = TestClient(app)

@@ -120,11 +120,14 @@ def decider(request: Request, scope: Scope) -> ActingIdentity | Refusal:
     return identity
 
 
-def is_control_allowed(request: Request, scope: Scope, agent_did: str) -> bool:
+def is_control_allowed(request: Request, scope: Scope, agent_did: str | None) -> bool:
     """Operator session / operator token, or an app holding ``scope`` for ``agent_did``.
 
-    For an app the check is scope-bound only; the person's approver entries are
-    enforced later by the control plane (gates), not here.
+    An app acting alone is scope-bound only. An app acting for a person also
+    needs the person to be able to do it themselves (REQ-562): the person holds
+    the operator role. ``gates:resolve`` is the exception: the person's
+    approver entries are enforced later by the workflow control plane, so a
+    viewer listed as a gate approver may resolve that gate through an app.
     """
     principal: RequestPrincipal | None = getattr(request.state, "principal", None)
     if principal is None:
@@ -132,7 +135,11 @@ def is_control_allowed(request: Request, scope: Scope, agent_did: str) -> bool:
     if principal.kind != "app":
         return OPERATOR in principal.roles
     config: PrincipalsConfig = request.app.state.principals_config
-    return scope_allowed(principal, scope, agent_did, config.wildcards_allowed)
+    if not scope_allowed(principal, scope, agent_did, config.wildcards_allowed):
+        return False
+    if principal.on_behalf_of is None or scope == Scope.GATES_RESOLVE:
+        return True
+    return OPERATOR in principal.roles
 
 
 def _check_delegation(request: Request, identity: ActingIdentity, scope: Scope) -> Refusal | None:

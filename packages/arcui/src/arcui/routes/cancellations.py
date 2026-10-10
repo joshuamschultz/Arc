@@ -5,7 +5,7 @@
 
 Surfaces run in a *separate process* from the agent, so this route cannot stop a
 run directly — it parks a ``pending`` row in the shared arcstore ``cancellations``
-directory, attributed to the operator, that the target agent's run-control watcher
+directory, attributed to the acting identity, that the target agent's run-control watcher
 observes and applies (``RunHandle.cancel``). Cancellation is an operator-role action
 (ASI09/ASI10); a viewer session is refused and the refusal is audited.
 """
@@ -22,12 +22,11 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.acting import acting_identity
 from arcui.audit import emit_mutation_audit
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.cancellations")
-
-_OPERATOR_DID = "did:arc:ui:operator"
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -81,7 +80,7 @@ async def request_cancellation(request: Request) -> JSONResponse:
             run_id=str(body.get("run_id") or ""),
             session_key=str(body.get("session_key") or ""),
             reason=str(body.get("reason") or ""),
-            requested_by=_OPERATOR_DID,
+            requested_by=acting_identity(request).actor_did,
         )
     except ValidationError:
         return _error("a run_id or session_key is required", 400)

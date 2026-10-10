@@ -34,18 +34,19 @@ from arctrust import FileJournalAnchor, InProcessSigner
 from arctrust.audit import AuditEvent
 from arctrust.principals import Delegation, Principal, PrincipalStore, Scope, derive_app_did
 from arctrust.users import OPERATOR, VIEWER, UserStore
-from arcui.acting import ActingIdentity, Refusal, acting_identity, decider, is_control_allowed
-from arcui.principals import (
-    ENTERPRISE_REQUIRE_NAMED_DECIDER_DEFAULT,
-    PrincipalsConfig,
-    RequestPrincipal,
-)
 from nacl.secret import SecretBox
 from nacl.signing import SigningKey
 from packages.arcui.tests.user_authority import user_store_factory
 from pydantic import ValidationError
 from starlette.applications import Starlette
 from starlette.requests import Request
+
+from arcui.acting import ActingIdentity, Refusal, acting_identity, decider, is_control_allowed
+from arcui.principals import (
+    ENTERPRISE_REQUIRE_NAMED_DECIDER_DEFAULT,
+    PrincipalsConfig,
+    RequestPrincipal,
+)
 
 TIERS = ("personal", "enterprise", "federal")
 AGENT_A = "did:arc:test:agent/olivia"
@@ -801,14 +802,44 @@ def test_is_control_allowed_for_sessions_and_tokens(
 
 
 @pytest.mark.parametrize("tier", TIERS)
-@pytest.mark.parametrize("caller", [Caller.APP_ALONE, Caller.APP_FOR_VIEWER])
+@pytest.mark.parametrize("scope", [Scope.TASKS_WRITE, Scope.GATES_RESOLVE])
+@pytest.mark.parametrize("caller", [Caller.APP_ALONE, Caller.APP_FOR_OPERATOR])
 def test_is_control_allowed_app_with_scope_bound_to_agent(
-    world: World, tier: str, caller: Caller
+    world: World, tier: str, caller: Caller, scope: Scope
 ) -> None:
-    # For apps, control is scope-bound; the person's approver entries are
-    # enforced later by the control plane (gates), not here.
+    # An app alone is scope-bound only; an app for an operator person passes
+    # because the person could do it themselves and the scope is bound.
     built = build_request(world, caller, _config(tier))
-    assert is_control_allowed(built.request, Scope.TASKS_WRITE, AGENT_A) is True
+    assert is_control_allowed(built.request, scope, AGENT_A) is True
+
+
+@pytest.mark.parametrize("tier", TIERS)
+def test_is_control_allowed_app_for_viewer_person_cannot_write_tasks(
+    world: World, tier: str
+) -> None:
+    # REQ-562 intersection: the app holds tasks:write for AGENT_A, but the
+    # viewer it acts for could not write tasks, so neither can the app.
+    built = build_request(world, Caller.APP_FOR_VIEWER, _config(tier))
+    assert is_control_allowed(built.request, Scope.TASKS_WRITE, AGENT_A) is False
+
+
+@pytest.mark.parametrize("tier", TIERS)
+def test_is_control_allowed_app_for_viewer_person_may_resolve_gates(
+    world: World, tier: str
+) -> None:
+    # gates:resolve is the exception: a viewer listed as a gate approver may
+    # resolve that gate; the control plane enforces the approver entries.
+    built = build_request(world, Caller.APP_FOR_VIEWER, _config(tier))
+    assert is_control_allowed(built.request, Scope.GATES_RESOLVE, AGENT_A) is True
+
+
+@pytest.mark.parametrize("tier", TIERS)
+def test_is_control_allowed_app_for_viewer_person_unbound_gate_agent_is_false(
+    world: World, tier: str
+) -> None:
+    # The viewer exception never widens the app's own agent binding.
+    built = build_request(world, Caller.APP_FOR_VIEWER, _config(tier))
+    assert is_control_allowed(built.request, Scope.GATES_RESOLVE, AGENT_B) is False
 
 
 @pytest.mark.parametrize("tier", TIERS)

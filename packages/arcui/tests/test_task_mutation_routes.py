@@ -46,6 +46,7 @@ from starlette.testclient import TestClient
 
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.principals import PrincipalsConfig
 
 _CREATOR = "did:arc:test:human/operator"
 
@@ -81,6 +82,8 @@ def _make_app(tmp_path: Path) -> tuple[Starlette, AuthConfig]:
     app = Starlette(routes=task_routes)
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
+    # create_app always sets this; review decisions read it through decider().
+    app.state.principals_config = PrincipalsConfig(tier="personal")
     app.state.audit = UIAuditLogger(enabled=False)
     app.state.task_store = asyncio.run(_seed_store(tmp_path))
     return app, auth

@@ -262,6 +262,13 @@ def _user_handler(args: list[str]) -> None:
     user_handler(args)
 
 
+def _principal_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.principal import principal_handler
+
+    principal_handler(args)
+
+
 def _accounts_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.accounts import accounts_handler
@@ -708,6 +715,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_user_handler,
+    ),
+    CommandDef(
+        name="principal",
+        description="App principals that call the ArcUI API — issue, list, show, revoke",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_principal_handler,
     ),
     CommandDef(
         name="accounts",
