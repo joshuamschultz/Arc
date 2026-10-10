@@ -14,6 +14,7 @@ from arctrust.audit import AuditSink, DurableAuditSink
 from arctrust.authority_config import DeploymentAuthorityConfig, load_authority_config
 from arctrust.identity import parse_did
 from arctrust.monotonic import BootstrapAuthority, MonotonicAnchor
+from arctrust.principals import PrincipalStore
 from arctrust.transit_http import VaultTransitHTTP
 from arctrust.users import UserStore
 from arctrust.vault_anchor import VaultKVAnchor
@@ -71,26 +72,38 @@ class AccountAuthority:
         self._strict_audit_sink = strict_audit_sink
         self._actor_verifier = actor_verifier
         self._users_path = users_path
+        # Same private directory as the users cache: one authority, two records.
+        self._principals_path = users_path.with_name("principals.json")
         self._issuer = VaultTransitHTTP(
             leases[Capability.ISSUER]._adapter_client(), mount=config.transit_mount
         )
-        self._anchor = VaultKVAnchor(
-            leases[Capability.ANCHOR]._adapter_client(),
-            mount=config.anchor_mount,
-            record="users",
-            bootstrap_authority=bootstrap_authority,
-        )
-        self._cipher = VaultCipher(
-            leases[Capability.CIPHER]._adapter_client(),
-            mount=config.transit_mount,
-            key="account-seal",
-            scope=self._anchor.scope,
-            record_id="users",
+        self._anchor, self._cipher = self._sealed_record("users", bootstrap_authority)
+        self._principal_anchor, self._principal_cipher = self._sealed_record(
+            "principals", bootstrap_authority
         )
 
-    def _actor_did(self, proof: object) -> str:
+    def _sealed_record(
+        self, record: str, bootstrap_authority: BootstrapAuthority | None
+    ) -> tuple[VaultKVAnchor, VaultCipher]:
+        """One authority record: its own anchor head and a cipher bound to that head's scope."""
+        anchor = VaultKVAnchor(
+            self._leases[Capability.ANCHOR]._adapter_client(),
+            mount=self._config.anchor_mount,
+            record=record,
+            bootstrap_authority=bootstrap_authority,
+        )
+        cipher = VaultCipher(
+            self._leases[Capability.CIPHER]._adapter_client(),
+            mount=self._config.transit_mount,
+            key="account-seal",
+            scope=anchor.scope,
+            record_id=record,
+        )
+        return anchor, cipher
+
+    def _actor_did(self, proof: object, *, action: str) -> str:
         try:
-            did = self._actor_verifier.authenticate(proof, action="users.mutate")
+            did = self._actor_verifier.authenticate(proof, action=action)
             parsed = parse_did(did)
             if parsed["org"] != self._config.tenant_id or not parsed["hash"]:
                 raise ValueError("actor tenant mismatch")
@@ -100,12 +113,24 @@ class AccountAuthority:
 
     def user_store(self, actor_proof: object) -> UserStore:
         """Bind a store to an independently authenticated actor and strict audit."""
-        did = self._actor_did(actor_proof)
+        did = self._actor_did(actor_proof, action="users.mutate")
         return UserStore(
             self._users_path,
             issuer=self._issuer,
             anchor=self._anchor,
             cipher=self._cipher,
+            audit_sink=self._audit_sink,
+            strict_audit_sink=self._strict_audit_sink,
+            actor_did=did,
+        )
+
+    def principal_store(self, actor_proof: object) -> PrincipalStore:
+        """Bind the app-principal store to an authenticated actor and strict audit."""
+        did = self._actor_did(actor_proof, action="principals.mutate")
+        return PrincipalStore(
+            self._principals_path,
+            anchor=self._principal_anchor,
+            cipher=self._principal_cipher,
             audit_sink=self._audit_sink,
             strict_audit_sink=self._strict_audit_sink,
             actor_did=did,

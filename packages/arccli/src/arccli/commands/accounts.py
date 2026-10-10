@@ -29,7 +29,11 @@ from arctrust.signer import ED25519, Signer
 from arctrust.vault_anchor import VaultKVAnchor
 from arctrust.vault_lease import Capability, CapabilityGrant, sign_capability_grant
 
-from arccli.commands._accounts import AccountsConfigError, bootstrap_marker_path
+from arccli.commands._accounts import (
+    AUTHORITY_RECORDS,
+    AccountsConfigError,
+    bootstrap_marker_path,
+)
 from arccli.commands.operator import operator_signer_and_did, operator_worm_sink
 
 _CAPABILITIES = (Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR)
@@ -107,15 +111,15 @@ def _read_admin_token() -> str:
     return token
 
 
-def _users_anchor_missing(admin: httpx.Client, anchor_mount: str) -> bool:
+def _record_anchor_missing(admin: httpx.Client, anchor_mount: str, record: str) -> bool:
     try:
         status = admin.get(
-            f"/v1/{anchor_mount}/metadata/users", timeout=5.0, follow_redirects=False
+            f"/v1/{anchor_mount}/metadata/{record}", timeout=5.0, follow_redirects=False
         ).status_code
     except httpx.HTTPError:
-        _fail("Vault is unreachable while checking the users anchor")
+        _fail(f"Vault is unreachable while checking the {record} anchor")
     if status not in {200, 404}:
-        _fail(f"Vault refused the users anchor check (HTTP {status})")
+        _fail(f"Vault refused the {record} anchor check (HTTP {status})")
     return status == 404
 
 
@@ -229,9 +233,10 @@ def _run(
     _write_private(grants_path, json.dumps(grants).encode())
     audit.step("grants_file", str(grants_path))
 
-    if _users_anchor_missing(admin, config.anchor_mount):
-        _write_private(bootstrap_marker_path(grants_path), b"1\n")
-        audit.step("users_bootstrap", f"{config.anchor_mount}/users")
+    for record in AUTHORITY_RECORDS:
+        if _record_anchor_missing(admin, config.anchor_mount, record):
+            _write_private(bootstrap_marker_path(grants_path, record), b"1\n")
+            audit.step(f"{record}_bootstrap", f"{config.anchor_mount}/{record}")
 
     sys.stdout.write(
         f"Enrolled {config.namespace} at revision {config.revision}.\n"

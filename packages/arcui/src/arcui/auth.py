@@ -25,7 +25,12 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from arcui.audit import SessionStartFields, UIAuditEvent, record_unaudited_refusal
+from arcui.audit import (
+    SessionStartFields,
+    UIAuditEvent,
+    record_unaudited_refusal,
+    ui_session_actor,
+)
 from arcui.sessions import Session, SessionRegistry
 
 logger = logging.getLogger(__name__)
@@ -238,20 +243,6 @@ class AuthConfig:
 
 ANONYMOUS_UI_ACTOR = "did:arc:ui:anonymous"
 """Initiator for an unauthenticated API call (login, liveness)."""
-
-
-def ui_session_actor(request: Request) -> str:
-    """The initiator id for an authenticated UI request.
-
-    The signed-in account's DID when there is one; otherwise a pseudo-DID for
-    the auth layer's session (a shared bearer token has no person behind it,
-    but each browser session is still a distinct actor).
-    """
-    account_did = getattr(request.state, "account_did", None)
-    if account_did:
-        return str(account_did)
-    session_id = getattr(request.state, "session_id", None) or "untracked"
-    return f"did:arc:ui:session:{session_id}"
 
 
 class AuthMiddleware(BaseHTTPMiddleware):

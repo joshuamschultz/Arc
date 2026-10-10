@@ -202,3 +202,67 @@ def test_local_config_errors_are_authority_errors_so_arcui_answers_503() -> None
     from arccli.commands._accounts import AccountsConfigError
 
     assert issubclass(AccountsConfigError, AccountAuthorityError)
+
+
+def _app_principal():
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    from arctrust.principals import Principal, Scope, derive_app_did
+    from nacl.signing import SigningKey
+
+    public_key = bytes(SigningKey.generate().verify_key)
+    now = datetime.now(UTC)
+    return Principal(
+        id=uuid.uuid4().hex,
+        name="billing-bot",
+        did=derive_app_did(public_key, org="acme"),
+        public_key=public_key.hex(),
+        secret_digest="ab" * 32,
+        scopes={Scope.RUNS_READ: ("did:arc:acme:agent/olivia",)},
+        subjects=("did:arc:acme:user/ada",),
+        status="pending",
+        created_by="did:arc:acme:user/ada",
+        approved_by=None,
+        created_at=now,
+        expires_at=now + timedelta(days=30),
+        last_used_at=None,
+        revoked_by=None,
+        revoked_at=None,
+    )
+
+
+def test_the_factory_opens_a_principal_store_through_vault_beside_users(deployment):
+    """principals() mirrors the users store: same authority, own sealed record, durable audit."""
+    from arctrust.principals import PrincipalStore
+
+    sink = RecordingSink()
+    factory = _factory(deployment, sink)
+    factory().add("ada@example.com", PASSWORD, roles=("operator",))
+
+    store = factory.principals()
+
+    assert isinstance(store, PrincipalStore)
+    principal = _app_principal()
+    store.request(principal)
+    reread = factory.principals().get(principal.id)
+    assert reread is not None and reread.status == "pending"
+    # Its own record: the users store is untouched and still readable.
+    assert factory().get("ada@example.com") is not None
+    [event] = [e for e in sink.events if e.action == "principal.request"]
+    assert event.actor_did.startswith("did:arc:acme:operator/")
+    assert principal.secret_digest not in event.model_dump_json()
+
+
+def test_the_authority_binds_principal_stores_only_to_the_process_proof(deployment):
+    from arctrust.authority import AccountAuthorityError
+    from arctrust.principals import PrincipalStore
+
+    factory = _factory(deployment)
+    authority = factory._current()
+
+    assert isinstance(authority.principal_store(factory._proof), PrincipalStore)
+    with pytest.raises(AccountAuthorityError):
+        authority.principal_store(object())
+    with pytest.raises(AccountAuthorityError):
+        authority.principal_store("did:arc:acme:operator/forged")

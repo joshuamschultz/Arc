@@ -93,9 +93,16 @@ class MutationAuditFields(BaseModel):
     the change to the authenticated operator session; ``target`` names the
     thing changed (agent DID, channel name, memory id); ``operation`` is the
     verb (``channel.create``); ``outcome`` records whether it took effect.
+
+    SPEC-087 COMP-007: ``actor_did`` names WHO acted (a signed-in account's DID,
+    or the session pseudo-DID for a static token) so two people sharing a role
+    never collapse into one row; ``on_behalf_of`` names the person an app acted
+    for, ``None`` when the actor acted for itself.
     """
 
     actor_role: str
+    actor_did: str
+    on_behalf_of: str | None = None
     session_id: str
     target: str
     operation: str
@@ -261,9 +268,45 @@ class MutationWormWriter:
                 target=fields.target,
                 outcome=fields.outcome,
                 request_id=fields.session_id,
-                extra={"actor_role": fields.actor_role, "detail": fields.detail},
+                extra={
+                    "actor_role": fields.actor_role,
+                    "acting_did": fields.actor_did,
+                    "on_behalf_of": fields.on_behalf_of,
+                    "detail": fields.detail,
+                },
             )
         )
+
+
+def ui_session_actor(request: Any) -> str:
+    """The initiator id for an authenticated UI request.
+
+    The signed-in account's DID when there is one; otherwise a pseudo-DID for
+    the auth layer's session (a shared bearer token has no person behind it,
+    but each browser session is still a distinct actor). Lives here, not in
+    ``arcui.auth``, because the auth layer imports this module.
+    """
+    account_did = getattr(request.state, "account_did", None)
+    if account_did:
+        return str(account_did)
+    session_id = getattr(request.state, "session_id", None) or "untracked"
+    return f"did:arc:ui:session:{session_id}"
+
+
+def _request_audit_fields(
+    request: Any, *, target: str, operation: str, outcome: str, detail: str
+) -> MutationAuditFields:
+    """Attribute one audit row to the request's actor (role, session, DID, person)."""
+    return MutationAuditFields(
+        actor_role=getattr(request.state, "role", None) or "unknown",
+        actor_did=ui_session_actor(request),
+        on_behalf_of=getattr(request.state, "on_behalf_of", None),
+        session_id=getattr(request.state, "session_id", None) or "unknown",
+        target=target,
+        operation=operation,
+        outcome=outcome,
+        detail=detail,
+    )
 
 
 def build_mutation_worm_writer(data_dir: Path) -> MutationWormWriter | None:
@@ -312,15 +355,8 @@ def emit_mutation_audit(
     outcome are recorded uniformly. Both surfaces are optional: a bare test app has
     neither, matching the session-start emitter's tolerance.
     """
-    role = getattr(request.state, "role", None) or "unknown"
-    session_id = getattr(request.state, "session_id", None) or "unknown"
-    fields = MutationAuditFields(
-        actor_role=role,
-        session_id=session_id,
-        target=target,
-        operation=operation,
-        outcome=outcome,
-        detail=detail,
+    fields = _request_audit_fields(
+        request, target=target, operation=operation, outcome=outcome, detail=detail
     )
     # Marks the request as having recorded its own outcome, so the auth layer
     # does not add a generic refusal row on top (see record_unaudited_refusal).
@@ -373,15 +409,8 @@ def emit_read_audit(
     ephemeral log + OTel span on ``app.state.audit`` is the compliance record. A
     bare test app with no ``audit`` sink is tolerated (matches the mutation emitter).
     """
-    role = getattr(request.state, "role", None) or "unknown"
-    session_id = getattr(request.state, "session_id", None) or "unknown"
-    fields = MutationAuditFields(
-        actor_role=role,
-        session_id=session_id,
-        target=target,
-        operation=operation,
-        outcome=outcome,
-        detail=detail,
+    fields = _request_audit_fields(
+        request, target=target, operation=operation, outcome=outcome, detail=detail
     )
     audit = getattr(request.app.state, "audit", None)
     if audit is not None:
@@ -444,4 +473,5 @@ __all__ = [
     "operator_actor_did",
     "operator_audit_sink",
     "record_unaudited_refusal",
+    "ui_session_actor",
 ]

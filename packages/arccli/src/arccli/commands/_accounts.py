@@ -17,13 +17,14 @@ import stat
 import threading
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
 from arctrust import AuditEvent, AuditSink, UserStore
 from arctrust.authority import AccountAuthority, AccountAuthorityError, open_account_authority
 from arctrust.authority_config import DeploymentAuthorityConfig
 from arctrust.identity import did_from_public_key
+from arctrust.principals import PrincipalStore
 from arctrust.transit_cipher import TransitUnavailableError
 from arctrust.users import default_users_path
 from arctrust.vault_anchor import VaultKVAnchor
@@ -35,7 +36,11 @@ _logger = logging.getLogger(__name__)
 
 _MAX_FILE = 65_536
 _ACCOUNT_CAPABILITIES = (Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR)
-_BOOTSTRAP_MARKER = "users-bootstrap.once"
+# Authority records enrollment may leave a single-use bootstrap marker for.
+AUTHORITY_RECORDS = ("users", "principals")
+_ACTOR_ACTIONS = frozenset(f"{record}.mutate" for record in AUTHORITY_RECORDS)
+
+_StoreT = TypeVar("_StoreT")
 
 
 class AccountsConfigError(AccountAuthorityError):
@@ -74,31 +79,33 @@ def read_private_file(path: Path, *, what: str) -> bytes:
         os.close(fd)
 
 
-def bootstrap_marker_path(grants_file: Path) -> Path:
-    """Where enrollment leaves the single-use permission to create the users anchor."""
-    return grants_file.with_name(_BOOTSTRAP_MARKER)
+def bootstrap_marker_path(grants_file: Path, record: str) -> Path:
+    """Where enrollment leaves the single-use permission to create ``record``'s anchor."""
+    if record not in AUTHORITY_RECORDS:
+        raise AccountsConfigError("unknown authority record")
+    return grants_file.with_name(f"{record}-bootstrap.once")
 
 
 # ------------------------------------------------------------------ trust adapters
 
 
 class _OnceBootstrap:
-    """Single-use permission to create the missing ``users`` anchor.
+    """Single-use permission to create each missing authority anchor.
 
-    Enrollment (admin token) leaves a marker next to the grants file when Vault has
-    no ``users`` record. Consuming removes it, so the permission cannot be replayed.
-    Vault's own ``cas=0`` refuses to overwrite an existing record regardless.
+    Enrollment (admin token) leaves one marker per record next to the grants file
+    when Vault has no such record. Consuming removes it, so the permission cannot be
+    replayed. Vault's own ``cas=0`` refuses to overwrite an existing record regardless.
     """
 
-    def __init__(self, marker: Path, scope: str) -> None:
-        self._marker = marker
-        self._scope = scope
+    def __init__(self, markers: dict[str, Path]) -> None:
+        self._markers = markers  # anchor scope -> marker file
 
     def consume(self, scope: str) -> bool:
-        if scope != self._scope:
+        marker = self._markers.get(scope)
+        if marker is None:
             return False
         try:
-            self._marker.unlink()
+            marker.unlink()
         except OSError:
             return False
         return True
@@ -118,7 +125,7 @@ class _ProcessActor:
         self._did = did
 
     def authenticate(self, proof: object, *, action: str) -> str:
-        if proof is not self._proof or action != "users.mutate":
+        if proof is not self._proof or action not in _ACTOR_ACTIONS:
             raise PermissionError("account actor proof refused")
         return self._did
 
@@ -237,12 +244,19 @@ class _AuthorityFactory:
         self._lock = threading.Lock()
 
     def __call__(self) -> UserStore:
+        return self._bind(lambda authority: authority.user_store(self._proof))
+
+    def principals(self) -> PrincipalStore:
+        """The app-principal store, bound to the same authority as the users store."""
+        return self._bind(lambda authority: authority.principal_store(self._proof))
+
+    def _bind(self, open_store: Callable[[AccountAuthority], _StoreT]) -> _StoreT:
         authority = self._current()
         try:
-            return authority.user_store(self._proof)
+            return open_store(authority)
         except VaultLeaseError:
             _logger.warning("accounts.lease_error reopening authority")
-            return self._reopen(authority).user_store(self._proof)
+            return open_store(self._reopen(authority))
 
     def _current(self) -> AccountAuthority:
         with self._lock:
@@ -322,7 +336,10 @@ class _AuthorityFactory:
             actor_verifier=_ProcessActor(self._proof, actor_did),
             users_path=self._users_path or default_users_path(),
             bootstrap_authority=_OnceBootstrap(
-                bootstrap_marker_path(grants_path), f"{anchor_mount}/users"
+                {
+                    f"{anchor_mount}/{record}": bootstrap_marker_path(grants_path, record)
+                    for record in AUTHORITY_RECORDS
+                }
             ),
         )
 
@@ -370,6 +387,7 @@ def build_user_store_factory(
 
 
 __all__ = [
+    "AUTHORITY_RECORDS",
     "AccountsConfigError",
     "bootstrap_marker_path",
     "build_user_store_factory",

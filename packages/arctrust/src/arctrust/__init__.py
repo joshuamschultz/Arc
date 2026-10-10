@@ -242,6 +242,13 @@ from arctrust.policy import (
     verify_interactive_grant,
     verify_scenario_grant,
 )
+from arctrust.principals import (
+    Delegation,
+    Principal,
+    PrincipalStore,
+    PrincipalStoreError,
+    Scope,
+)
 from arctrust.record_envelope import RecordEnvelopeCipher
 from arctrust.redaction import (
     ALL_CATEGORIES,
@@ -479,6 +486,7 @@ __all__ = [
     "CredentialSealError",
     "CustodyTransit",
     "Decision",
+    "Delegation",
     "DeploymentAuthorityConfig",
     "DeploymentChallenge",
     "DeploymentGrant",
@@ -511,6 +519,9 @@ __all__ = [
     "PolicyContext",
     "PolicyLayer",
     "PolicyPipeline",
+    "Principal",
+    "PrincipalStore",
+    "PrincipalStoreError",
     "QueueBrokerAnchor",
     "QueueBrokerError",
     "RecordCipher",
@@ -519,6 +530,7 @@ __all__ = [
     "RegexPiiDetector",
     "ReplayCache",
     "ScenarioGrant",
+    "Scope",
     "SignedControlRevision",
     "Signer",
     "SignerConfig",

@@ -43,6 +43,7 @@ Initiator = Literal[
     "ui_session",
     "connector_probe",
     "system",
+    "app",
 ]
 """The kinds of principal that can cause an audited act."""
 

@@ -6,7 +6,8 @@ question that matters after an incident: which person allowed this. So a
 deployment has *users* — an email, a password, and a DID of their own — and the
 authenticated user becomes the identity recorded against what they approve.
 
-The local file is a cache of authority state. An independent monotonic anchor
+The local file is a cache of authority state persisted by
+``arctrust.sealed_state.SealedAuthorityState``: an independent monotonic anchor
 authenticates each revision and carries sealed recovery intent; private signing
 keys stay in external custody.
 
@@ -17,37 +18,34 @@ enough that operators disable it.
 
 from __future__ import annotations
 
-import fcntl
-import hashlib
-import json
-import os
 import re
-import stat
 import threading
 import time
 import uuid
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field, replace
 from functools import wraps
 from pathlib import Path
-from typing import Concatenate, ParamSpec, Protocol, TypeVar, cast
+from typing import Any, Concatenate, ParamSpec, Protocol, TypeVar, cast
 
 from nacl import pwhash
 from nacl.exceptions import InvalidkeyError
 
-from arctrust.audit import AuditEvent, AuditSink, DurableAuditSink
+from arctrust.audit import AuditSink, DurableAuditSink
 from arctrust.byte_cipher import ByteCipher
 from arctrust.identity import did_from_public_key, did_matches_pubkey, parse_did
-from arctrust.monotonic import AnchorHead, MonotonicAnchor
+from arctrust.monotonic import MonotonicAnchor
 from arctrust.paths import users_file
+from arctrust.sealed_state import (
+    AuthorityCommitUncertainError,
+    SealedAuthorityState,
+    UserStoreError,
+)
 
 # Mention-safe: starts alphanumeric, no spaces, no dots (which would collide
 # with sentence punctuation when an agent writes "@josh.").
 _HANDLE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,30}$")
 
-_FILE_MODE = 0o600
-_DIR_MODE = 0o700
 _LOCK_TIMEOUT_SECONDS = 5
 
 VIEWER = "viewer"
@@ -71,10 +69,6 @@ def _synchronized(
             self._mutex.release()
 
     return cast("Callable[Concatenate[UserStore, _P], _T]", wrapped)
-
-
-class UserStoreError(RuntimeError):
-    """The user store is unreadable, mis-permissioned, or malformed."""
 
 
 class UserKeyIssuer(Protocol):
@@ -169,267 +163,39 @@ class UserStore:
     ) -> None:
         self.path = path or default_users_path()
         self._issuer = issuer
-        self._anchor = anchor
-        self._cipher = cipher
-        self._audit_sink = audit_sink
-        self._strict_audit_sink = strict_audit_sink
-        self._actor_did = actor_did
+        self._state = SealedAuthorityState(
+            self.path,
+            anchor=anchor,
+            cipher=cipher,
+            audit_sink=audit_sink,
+            strict_audit_sink=strict_audit_sink,
+            record_name="users",
+            actor_did=actor_did,
+        )
         self._users: dict[str, User] = {}
-        self._head: AnchorHead | None = None
         self._mutex = threading.RLock()
-        self._dir_fd: int | None = None
-        self._lock_fd: int | None = None
         self._load()
 
     # --- persistence ----------------------------------------------------
 
     @_synchronized
     def _load(self) -> None:
-        with self._lock():
-            self._load_locked()
-
-    def _load_locked(self) -> None:
-        head = self._anchor.latest()
-        if head is None:
-            if self._read_file() is not None or self._head is not None:
-                raise UserStoreError("user authority anchor missing")
-            return
-        if head.scope != self._anchor.scope:
-            raise UserStoreError("user authority anchor scope mismatch")
-        sealed = self._read_file()
-        if sealed is None:
-            self._recover(head)
-            sealed = self._read_file()
-        try:
-            if sealed is None:
-                raise UserStoreError("user authority recovery failed")
-            if hashlib.sha256(sealed).hexdigest() != head.digest:
-                self._recover(head)
-                sealed = self._read_file()
-            if sealed is None:
-                raise UserStoreError("user authority recovery failed")
-            if hashlib.sha256(sealed).hexdigest() != head.digest:
-                raise UserStoreError("user authority integrity mismatch")
-            raw = json.loads(self._cipher.open(sealed.decode("ascii")))
-        except (OSError, json.JSONDecodeError) as exc:
-            raise UserStoreError("cannot read user authority state") from exc
-        try:
-            if not isinstance(raw, dict) or not isinstance(raw.get("users"), list):
-                raise TypeError("user authority state must contain users")
-            users = {
-                str(u["email"]): User(
-                    **{
-                        **u,
-                        "roles": tuple(u.get("roles", (VIEWER,))),
-                        "pairings": dict(u.get("pairings", {})),
-                    }
-                )
-                for u in raw.get("users", [])
-            }
-            if len(users) != len(raw["users"]):
-                raise ValueError("duplicate user identity")
-            for user in users.values():
-                public_key = bytes.fromhex(user.public_key)
-                if (
-                    len(public_key) != 32
-                    or not did_matches_pubkey(user.did, public_key)
-                    or parse_did(user.did)["agent_type"] != "user"
-                ):
-                    raise ValueError("invalid user identity")
-                if any(role not in ROLES for role in user.roles):
-                    raise ValueError("invalid user role")
-            self._audit("users.read", "allow", head.digest)
-            self._users = users
-            self._head = head
-        except (TypeError, KeyError, ValueError, IndexError) as exc:
-            raise UserStoreError("malformed user authority record") from exc
-
-    def _recover(self, head: AnchorHead) -> None:
-        if not head.intent:
-            raise UserStoreError("user authority recovery intent absent")
-        sealed = head.intent.encode("ascii")
-        if hashlib.sha256(sealed).hexdigest() != head.digest:
-            raise UserStoreError("user authority recovery intent invalid")
-        existing = self._read_file()
-        if existing is not None:
-            current = hashlib.sha256(existing).hexdigest()
-            if current != head.previous_digest:
-                raise UserStoreError("unexplained user authority rollback")
-        self._write(sealed)
+        users: dict[str, User] = {}
+        self._state.load(validate=lambda record: users.update(_users_from_record(record)))
+        self._users = users
 
     @_synchronized
     def _save(self, candidate: dict[str, User]) -> None:
-        with self._lock():
-            self._save_locked(candidate)
-
-    def _save_locked(self, candidate: dict[str, User]) -> None:
-        payload = json.dumps(
-            {"users": [asdict(u) for u in candidate.values()]},
-            sort_keys=True,
-            separators=(",", ":"),
-        ).encode()
-        sealed = self._cipher.seal(payload)
-        digest = hashlib.sha256(sealed.encode("ascii")).hexdigest()
-        self._audit("users.change", "attempt", digest)
-        self._assert_pinned()
-        head = self._anchor.compare_and_advance(self._head, digest, sealed)
-        if self._anchor.latest() != head:
-            raise UserStoreError("user authority advanced before local write")
         try:
-            self._write(sealed.encode("ascii"))
-        except OSError as exc:
-            raise UserStoreError("user authority write outcome is uncertain") from exc
-        self._head = head
+            self._state.save({"users": [asdict(u) for u in candidate.values()]})
+        except AuthorityCommitUncertainError:
+            # Anchored and written: the candidate is the authority now.
+            self._users = candidate
+            raise
         self._users = candidate
-        try:
-            self._audit("users.change", "allow", digest)
-        except Exception as exc:
-            raise UserStoreError("user authority committed; audit outcome is uncertain") from exc
-
-    @contextmanager
-    def _lock(self) -> Iterator[None]:
-        directory = self.path.parent
-        directory.mkdir(mode=_DIR_MODE, parents=True, exist_ok=True)
-        if directory.resolve() != directory.absolute() or directory.is_symlink():
-            raise UserStoreError("user authority directory is a symlink")
-        metadata = directory.stat()
-        if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise UserStoreError("user authority directory is not private")
-        dir_fd = os.open(
-            directory,
-            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
-        try:
-            lock_fd = os.open(
-                ".users.lock",
-                os.O_RDWR | os.O_NONBLOCK | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0),
-                _FILE_MODE,
-                dir_fd=dir_fd,
-            )
-            try:
-                lock_meta = os.fstat(lock_fd)
-                if (
-                    lock_meta.st_uid != os.getuid()
-                    or stat.S_IMODE(lock_meta.st_mode) != _FILE_MODE
-                    or not stat.S_ISREG(lock_meta.st_mode)
-                    or lock_meta.st_nlink != 1
-                ):
-                    raise UserStoreError("user authority lock is not private")
-                deadline = time.monotonic() + _LOCK_TIMEOUT_SECONDS
-                while True:
-                    try:
-                        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                        break
-                    except BlockingIOError:
-                        if time.monotonic() >= deadline:
-                            raise UserStoreError("user authority lock is busy") from None
-                        time.sleep(0.02)
-                try:
-                    self._dir_fd = dir_fd
-                    self._lock_fd = lock_fd
-                    self._assert_pinned()
-                    yield
-                finally:
-                    self._dir_fd = None
-                    self._lock_fd = None
-                    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            finally:
-                os.close(lock_fd)
-        finally:
-            os.close(dir_fd)
 
     def _check_write_head(self) -> None:
-        if self._anchor.latest() != self._head:
-            self._audit("users.change", "deny", self._head.digest if self._head else "0" * 64)
-            raise UserStoreError("stale user authority writer")
-
-    def _audit(self, action: str, outcome: str, digest: str) -> None:
-        event = AuditEvent(
-            actor_did=self._actor_did,
-            action=action,
-            target=self._anchor.scope,
-            outcome=outcome,
-            payload_hash=digest,
-        )
-        if action == "users.change" and self._strict_audit_sink is not None:
-            self._strict_audit_sink.write_durable(event)
-        else:
-            self._audit_sink.write(event)
-
-    def _assert_pinned(self) -> int:
-        dir_fd, lock_fd = self._dir_fd, self._lock_fd
-        if dir_fd is None or lock_fd is None:
-            raise UserStoreError("user authority lock is absent")
-        directory = self.path.parent
-        if directory.resolve() != directory.absolute():
-            raise UserStoreError("user authority directory changed")
-        try:
-            directory_meta = os.stat(directory, follow_symlinks=False)
-            lock_meta = os.stat(".users.lock", dir_fd=dir_fd, follow_symlinks=False)
-        except OSError as exc:
-            raise UserStoreError("user authority lock or directory changed") from exc
-        pinned_meta = os.fstat(dir_fd)
-        if (directory_meta.st_dev, directory_meta.st_ino) != (
-            pinned_meta.st_dev,
-            pinned_meta.st_ino,
-        ):
-            raise UserStoreError("user authority directory changed")
-        pinned_lock = os.fstat(lock_fd)
-        if (lock_meta.st_dev, lock_meta.st_ino) != (
-            pinned_lock.st_dev,
-            pinned_lock.st_ino,
-        ) or pinned_lock.st_nlink != 1:
-            raise UserStoreError("user authority lock changed")
-        return dir_fd
-
-    def _read_file(self) -> bytes | None:
-        dir_fd = self._assert_pinned()
-        try:
-            fd = os.open(
-                self.path.name,
-                os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=dir_fd,
-            )
-        except FileNotFoundError:
-            return None
-        except OSError as exc:
-            raise UserStoreError("user store is not a private regular file") from exc
-        try:
-            metadata = os.fstat(fd)
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or metadata.st_nlink != 1
-                or metadata.st_uid != os.getuid()
-                or stat.S_IMODE(metadata.st_mode) != _FILE_MODE
-            ):
-                raise UserStoreError("user store has insecure permissions or file type")
-            with os.fdopen(fd, "rb", closefd=False) as stream:
-                return stream.read()
-        finally:
-            os.close(fd)
-
-    def _write(self, payload: bytes) -> None:
-        dir_fd = self._assert_pinned()
-        name = f".{self.path.name}.{uuid.uuid4().hex}.tmp"
-        tmp_fd = os.open(
-            name,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
-            _FILE_MODE,
-            dir_fd=dir_fd,
-        )
-        try:
-            with os.fdopen(tmp_fd, "wb") as stream:
-                stream.write(payload)
-                stream.flush()
-                os.fsync(stream.fileno())
-            self._assert_pinned()
-            os.replace(name, self.path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-            os.fsync(dir_fd)
-        finally:
-            try:
-                os.unlink(name, dir_fd=dir_fd)
-            except FileNotFoundError:
-                pass
+        self._state.assert_current()
 
     # --- queries --------------------------------------------------------
 
@@ -738,6 +504,40 @@ class UserStore:
         if user is None or user.disabled:
             return None
         return user
+
+
+def _users_from_record(raw: dict[str, Any]) -> dict[str, User]:
+    """Decode and check every user in an anchored record; refuse the whole record otherwise."""
+    try:
+        records = raw["users"]
+        if not isinstance(records, list):
+            raise TypeError("user authority state must contain users")
+        users = {str(u["email"]): _user_from_dict(u) for u in records}
+        if len(users) != len(records):
+            raise ValueError("duplicate user identity")
+    except (TypeError, KeyError, ValueError, IndexError) as exc:
+        raise UserStoreError("malformed user authority record") from exc
+    return users
+
+
+def _user_from_dict(record: dict[str, Any]) -> User:
+    user = User(
+        **{
+            **record,
+            "roles": tuple(record.get("roles", (VIEWER,))),
+            "pairings": dict(record.get("pairings", {})),
+        }
+    )
+    public_key = bytes.fromhex(user.public_key)
+    if (
+        len(public_key) != 32
+        or not did_matches_pubkey(user.did, public_key)
+        or parse_did(user.did)["agent_type"] != "user"
+    ):
+        raise ValueError("invalid user identity")
+    if any(role not in ROLES for role in user.roles):
+        raise ValueError("invalid user role")
+    return user
 
 
 def _normalize(email: str) -> str:
