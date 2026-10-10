@@ -72,6 +72,16 @@ HEADER_TIMESTAMP = "X-Arc-Timestamp"
 HEADER_SIGNATURE = "X-Arc-Signature"
 HEADER_ON_BEHALF_OF = "X-Arc-On-Behalf-Of"
 
+_ARC_HEADERS = frozenset(
+    name.lower()
+    for name in (
+        HEADER_PRINCIPAL,
+        HEADER_NONCE,
+        HEADER_TIMESTAMP,
+        HEADER_SIGNATURE,
+        HEADER_ON_BEHALF_OF,
+    )
+)
 _BEARER_PREFIX = "arcp_"
 _SECRET_BYTES = 32
 _NONCE_BYTES = 32
@@ -179,8 +189,16 @@ class SignedRequest:
     def from_headers(
         cls, headers: Mapping[str, str], method: str, path: str, query: str, body: bytes
     ) -> SignedRequest:
-        """Build the envelope from request parts; header names are case-insensitive."""
-        lowered = {name.lower(): value for name, value in headers.items()}
+        """Build the envelope from request parts; header names are case-insensitive.
+
+        A repeated ``X-Arc-*`` header is ``malformed``: with two copies, the
+        signature could cover one while the caller acts on the other.
+        """
+        pairs = [(name.lower(), value) for name, value in headers.items()]
+        arc_names = [name for name, _ in pairs if name in _ARC_HEADERS]
+        if len(arc_names) != len(set(arc_names)):
+            raise PrincipalRejected("malformed")
+        lowered = dict(pairs)
         return cls(
             principal_did=_required_header(lowered, HEADER_PRINCIPAL),
             nonce=_required_header(lowered, HEADER_NONCE),

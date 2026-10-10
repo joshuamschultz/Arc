@@ -33,6 +33,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+
+from arctrust import replay as replay_module
+from arctrust.canonical import canonical_json
+from arctrust.identity import did_from_public_key
+from arctrust.keypair import KeyPair, generate_keypair, verify
 from arctrust.principal_auth import (
     CLOCK_SKEW_SECONDS,
     REPLAY_WINDOW_SECONDS,
@@ -42,11 +47,6 @@ from arctrust.principal_auth import (
     sign_request,
     verify_signed,
 )
-
-from arctrust import replay as replay_module
-from arctrust.canonical import canonical_json
-from arctrust.identity import did_from_public_key
-from arctrust.keypair import KeyPair, generate_keypair, verify
 from arctrust.principals import Principal, Scope, derive_app_did
 from arctrust.replay import ReplayCache
 
@@ -236,6 +236,27 @@ class TestSignRequestWireFormat:
         headers = signed_headers(keys, record)
         del headers[missing]
         assert _reject(lambda: envelope(headers)).reason == "malformed"
+
+    @pytest.mark.parametrize("repeated", sorted(HEADER_NAMES | {"X-Arc-On-Behalf-Of"}))
+    def test_from_headers_repeated_arc_header_refused(
+        self, keys: KeyPair, record: Principal, repeated: str
+    ) -> None:
+        """A repeated X-Arc-* header is ambiguous: the verifier and the route
+        could each read a different copy (one signed, one acted on)."""
+
+        class _MultiHeaders(dict[str, str]):
+            """A header map that, like an HTTP one, can repeat a name in items()."""
+
+            def __init__(self, pairs: list[tuple[str, str]]) -> None:
+                super().__init__(pairs)
+                self._pairs = pairs
+
+            def items(self) -> Any:
+                return list(self._pairs)
+
+        headers = signed_headers(keys, record)
+        pairs = [(repeated.lower(), "injected"), *headers.items()]
+        assert _reject(lambda: envelope(_MultiHeaders(pairs))).reason == "malformed"
 
 
 # ---------------------------------------------------------------------------
