@@ -29,6 +29,10 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from nacl.signing import SigningKey
+
+from arctrust import principal_auth
+from arctrust.identity import did_from_public_key
 from arctrust.principal_auth import (
     AuthenticatedPrincipal,
     PrincipalRejected,
@@ -38,10 +42,6 @@ from arctrust.principal_auth import (
     secret_digest,
     verify_bearer,
 )
-from nacl.signing import SigningKey
-
-from arctrust import principal_auth
-from arctrust.identity import did_from_public_key
 from arctrust.principals import Principal, Scope, derive_app_did
 
 ORG = "default"
