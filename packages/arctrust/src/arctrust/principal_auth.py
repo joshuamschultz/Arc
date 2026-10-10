@@ -37,7 +37,7 @@ from arctrust.canonical import canonical_json
 from arctrust.identity import did_matches_pubkey, parse_did
 from arctrust.keypair import sign, verify
 from arctrust.principals import APP_AGENT_TYPE, Principal, Scope
-from arctrust.replay import ReplayCache
+from arctrust.replay import CLOCK_SKEW_SECONDS, ReplayCache
 
 __all__ = [
     "CLOCK_SKEW_SECONDS",
@@ -61,8 +61,6 @@ __all__ = [
 ]
 
 REPLAY_WINDOW_SECONDS = 300
-# How far ahead of the verifier's clock a signed ts may be (clock drift).
-CLOCK_SKEW_SECONDS = 30
 # The one wire code every refusal shares; the reason stays internal.
 EXTERNAL_CODE = "principal_auth_failed"
 

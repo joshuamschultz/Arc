@@ -31,6 +31,7 @@ import pytest
 from arcteam.crypto import new_nonce
 from arctrust import AuditEvent, ReplayCache, generate_keypair
 from arctrust import identity as arc_identity
+from arctrust.replay import CLOCK_SKEW_SECONDS
 
 from arcagent.modules.mcp_server.identity import (
     InboundRejected,
@@ -212,6 +213,18 @@ def test_stale_timestamp_is_denied() -> None:
         verify_inbound(
             request, replay_cache=ReplayCache(window_seconds=300), audit_sink=sink, tier="personal"
         )
+    assert any(event.outcome == "deny" for event in sink.events)
+
+
+def test_future_timestamp_beyond_clock_skew_is_denied() -> None:
+    """A signed request stamped further ahead than the skew bound fails closed, audited."""
+    did, pub, priv = _identity()
+    future_ts = (datetime.now(UTC) + timedelta(seconds=CLOCK_SKEW_SECONDS + 60)).isoformat()
+    request = _signed(did, pub, priv, ts=future_ts, nonce=new_nonce())
+    sink = _RecordingSink()
+
+    with pytest.raises(InboundRejected):
+        verify_inbound(request, replay_cache=ReplayCache(), audit_sink=sink, tier="personal")
     assert any(event.outcome == "deny" for event in sink.events)
 
 

@@ -9,6 +9,7 @@ import pytest
 
 from arctrust import ReplayCache
 from arctrust import replay as replay_module
+from arctrust.replay import CLOCK_SKEW_SECONDS
 
 
 def test_public_replay_cache_rejects_replay_and_stale_timestamp() -> None:
@@ -64,3 +65,29 @@ def _pin_clock(monkeypatch: pytest.MonkeyPatch, start: datetime) -> list[datetim
 
     monkeypatch.setattr(replay_module, "datetime", _Clock)
     return current
+
+
+def test_future_timestamp_beyond_clock_skew_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A ts further ahead than the clock-skew bound is refused, and burns no nonce."""
+    arrival = datetime.now(UTC)
+    _pin_clock(monkeypatch, arrival)
+    cache = ReplayCache()
+    too_far = (arrival + timedelta(seconds=CLOCK_SKEW_SECONDS + 1)).isoformat()
+    assert not cache.check_and_record("ahead", too_far)
+    assert len(cache) == 0
+
+
+def test_future_timestamp_within_clock_skew_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    arrival = datetime.now(UTC)
+    _pin_clock(monkeypatch, arrival)
+    cache = ReplayCache()
+    at_bound = (arrival + timedelta(seconds=CLOCK_SKEW_SECONDS)).isoformat()
+    assert cache.check_and_record("drift", at_bound)
+
+
+def test_clock_skew_bound_is_the_principal_auth_bound() -> None:
+    """One definition: signed requests and the replay cache share the skew constant."""
+    from arctrust import principal_auth
+
+    assert CLOCK_SKEW_SECONDS == 30
+    assert principal_auth.CLOCK_SKEW_SECONDS is CLOCK_SKEW_SECONDS

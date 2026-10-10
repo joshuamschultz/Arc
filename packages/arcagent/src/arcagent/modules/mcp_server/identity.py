@@ -8,7 +8,7 @@ DID or fails closed with an audited denial.
 No new crypto lives here — it composes arctrust/arcteam seams: ``validate_did``,
 ``did_matches_pubkey``, ``arctrust.verify`` over ``canonical_json``, and
 ``arctrust.ReplayCache``. Every anomaly (malformed DID, missing signature,
-DID/key mismatch, bad signature, replay, stale timestamp) fails closed and emits a
+DID/key mismatch, bad signature, replay, stale or future timestamp) fails closed and emits a
 ``deny`` audit event through the single door emission point (:mod:`.audit`).
 """
 
@@ -125,7 +125,7 @@ def verify_inbound(
         _deny("signature does not verify against the request content")
 
     if not replay_cache.check_and_record(request.nonce, request.ts):
-        _deny("replayed nonce or stale timestamp")
+        _deny("replayed nonce or timestamp outside the window or clock skew")
 
     return request.caller_did
 

@@ -4,9 +4,18 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+#: How far ahead of the verifier's clock a timestamp may be (clock drift).
+#: The one definition; ``principal_auth`` re-exports it.
+CLOCK_SKEW_SECONDS = 30
+
 
 class ReplayCache:
-    """Sliding-window nonce cache. Rejects replays and stale timestamps.
+    """Sliding-window nonce cache. Rejects replays and out-of-window timestamps.
+
+    A ``ts`` is accepted only if it is at most ``window_seconds`` old and at
+    most ``skew_seconds`` ahead of the local clock. Without the upper bound a
+    far-future ``ts`` would stay "fresh" (and its nonce pinned in memory)
+    indefinitely.
 
     A nonce is remembered until its own timestamp can no longer pass the
     freshness check (``max(arrival, ts) + window``). Pruning by arrival time
@@ -14,8 +23,11 @@ class ReplayCache:
     reopening a replay for that request.
     """
 
-    def __init__(self, window_seconds: float = 300.0) -> None:
+    def __init__(
+        self, window_seconds: float = 300.0, skew_seconds: float = CLOCK_SKEW_SECONDS
+    ) -> None:
         self._window = window_seconds
+        self._skew = skew_seconds
         # nonce -> POSIX time after which the entry may be forgotten.
         self._forget_after: dict[str, float] = {}
 
@@ -29,14 +41,14 @@ class ReplayCache:
             del self._forget_after[nonce]
 
     def check_and_record(self, nonce: str, ts: str) -> bool:
-        """Return True if first-seen and fresh; False for replay or stale ``ts``."""
+        """Return True if first-seen and fresh; False for replay or out-of-window ``ts``."""
         now = datetime.now(UTC).timestamp()
         self._prune(now)
         try:
             sent_at = datetime.fromisoformat(ts).timestamp()
         except ValueError:
             return False
-        if now - sent_at > self._window:
+        if now - sent_at > self._window or sent_at - now > self._skew:
             return False
         if nonce in self._forget_after:
             return False
