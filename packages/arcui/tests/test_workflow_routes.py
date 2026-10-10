@@ -22,6 +22,7 @@ from starlette.testclient import TestClient
 
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.principals import PrincipalsConfig
 from arcui.routes import workflows as workflows_module
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
 from arcui.routes.workflows import routes as workflow_routes
@@ -129,6 +130,8 @@ def _make_app() -> tuple[Starlette, AuthConfig, FakeControlPlane, FakeGatePlane]
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
+    # Gate decisions pass the decider, which reads the tier's principal rules.
+    app.state.principals_config = PrincipalsConfig(tier="personal")
     plane = FakeControlPlane()
     gate = FakeGatePlane()
     app.state.workflow_control_plane = plane

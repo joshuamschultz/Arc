@@ -27,6 +27,7 @@ from typing import Any
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.acting import acting_identity
 from arcui.audit import emit_mutation_audit
 from arcui.routes.agent_detail._common import _agent_root
 from arcui.schemas import ErrorResponse
@@ -160,10 +161,6 @@ def _bound_voice(request: Request) -> tuple[Path, str] | JSONResponse:
     return agent_root, agent_did
 
 
-def _actor(request: Request) -> str:
-    return f"operator:{getattr(request.state, 'session_id', None) or 'unknown'}"
-
-
 async def post_voice_listening(request: Request) -> JSONResponse:
     """Turn listening ON/OFF: persisted to gateway.toml and applied live, no restart."""
     if not _is_operator(request):
@@ -181,7 +178,11 @@ async def post_voice_listening(request: Request) -> JSONResponse:
 
     set_voice_listening(gateway_config=config_file("gateway.toml"), on=on)
     adapter = _voice_adapter(request, agent_did)
-    clients = await adapter.set_listening(on, actor_did=_actor(request)) if adapter else 0
+    clients = (
+        await adapter.set_listening(on, actor_did=acting_identity(request).actor_did)
+        if adapter
+        else 0
+    )
     emit_mutation_audit(
         request,
         target=f"voice:{agent_root.name}",
@@ -221,7 +222,11 @@ async def post_voice_wake(request: Request) -> JSONResponse:
     except ValueError as exc:
         return _error(str(exc), 400)
     adapter = _voice_adapter(request, agent_did)
-    clients = await adapter.set_wake(wake, actor_did=_actor(request)) if adapter else 0
+    clients = (
+        await adapter.set_wake(wake, actor_did=acting_identity(request).actor_did)
+        if adapter
+        else 0
+    )
     emit_mutation_audit(
         request,
         target=f"voice:{agent_root.name}",
@@ -254,7 +259,7 @@ async def post_voice_test(request: Request) -> JSONResponse:
     adapter = _voice_adapter(request, agent_did)
     if adapter is None:
         return _error("the gateway is not running voice in this process.", 409)
-    clients = await adapter.start_test(actor_did=_actor(request))
+    clients = await adapter.start_test(actor_did=acting_identity(request).actor_did)
     emit_mutation_audit(
         request, target=f"voice:{agent_root.name}", operation="voice_test", outcome="allow"
     )

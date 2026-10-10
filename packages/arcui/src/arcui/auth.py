@@ -25,7 +25,19 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from arcui.audit import SessionStartFields, UIAuditEvent, record_unaudited_refusal
+from arcui.audit import (
+    SessionStartFields,
+    UIAuditEvent,
+    record_unaudited_refusal,
+    ui_session_actor,
+)
+from arcui.principals import (
+    authenticate_principal,
+    is_principal_request,
+    record_ignored_on_behalf_of,
+    session_principal,
+    static_token_principal,
+)
 from arcui.sessions import Session, SessionRegistry
 
 logger = logging.getLogger(__name__)
@@ -240,20 +252,6 @@ ANONYMOUS_UI_ACTOR = "did:arc:ui:anonymous"
 """Initiator for an unauthenticated API call (login, liveness)."""
 
 
-def ui_session_actor(request: Request) -> str:
-    """The initiator id for an authenticated UI request.
-
-    The signed-in account's DID when there is one; otherwise a pseudo-DID for
-    the auth layer's session (a shared bearer token has no person behind it,
-    but each browser session is still a distinct actor).
-    """
-    account_did = getattr(request.state, "account_did", None)
-    if account_did:
-        return str(account_did)
-    session_id = getattr(request.state, "session_id", None) or "untracked"
-    return f"did:arc:ui:session:{session_id}"
-
-
 class AuthMiddleware(BaseHTTPMiddleware):
     """Starlette middleware that validates bearer tokens on /api/* routes.
 
@@ -286,10 +284,16 @@ class AuthMiddleware(BaseHTTPMiddleware):
             with causal.bind(causal.root("ui_session", ANONYMOUS_UI_ACTOR)):
                 return await call_next(request)
 
-        # All other /api/* routes require a valid human (viewer/operator) token.
         auth_header = request.headers.get("authorization", "")
         token = auth_header.removeprefix("Bearer ").strip()
+        request.state.on_behalf_of = None
 
+        # SPEC-087: an app credential takes the principal path and never falls
+        # back to the static tokens, whatever happens on that path.
+        if is_principal_request(request, token):
+            return await self._dispatch_principal(request, call_next, token)
+
+        # All other /api/* routes require a valid human (viewer/operator) token.
         if not token:
             logger.warning("auth.missing_token path=%s", path)
             return JSONResponse({"error": "Missing token"}, status_code=401)
@@ -300,19 +304,12 @@ class AuthMiddleware(BaseHTTPMiddleware):
             logger.warning("auth.invalid_token path=%s", path)
             return JSONResponse({"error": "Invalid token"}, status_code=401)
 
+        user: Any = None
         session = self._auth.identify(token)
         if session is not None:
-            factory = getattr(request.app.state, "user_store_factory", None)
-            if factory is None:
-                return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
-            try:
-                user = await asyncio.to_thread(lambda: factory().get(session.email))
-            except Exception:
-                logger.error("auth.authority_unavailable path=%s", path)
-                return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
-            if user is None or user.disabled or user.did != session.did:
-                self._auth.sessions.revoke(token)
-                return JSONResponse({"error": "Session is no longer authorized"}, status_code=401)
+            user = await self._session_user(request, token, session)
+            if isinstance(user, JSONResponse):
+                return user
             role = "operator" if user.is_operator else "viewer"
             self._auth.sessions.set_role(token, role)
             request.state.account_did = user.did
@@ -323,6 +320,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # COMP-010: expose the session id so mutation routes can attribute an
         # audit event to this operator session on every request.
         self._set_session_id(request, token)
+        # SPEC-087: one typed principal on every authenticated request.
+        request.state.principal = (
+            static_token_principal(ui_session_actor(request), role)
+            if user is None
+            else session_principal(user.did, user.roles)
+        )
+        record_ignored_on_behalf_of(request)
         logger.debug("auth.ok path=%s role=%s", path, role)
         # Item 20: everything this request causes is attributed to the browser
         # session that made it — never to the operator key that signs the audit.
@@ -331,6 +335,35 @@ class AuthMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             record_unaudited_refusal(request, response.status_code)
             return response
+
+    @staticmethod
+    async def _dispatch_principal(
+        request: Request, call_next: RequestResponseEndpoint, token: str
+    ) -> Response:
+        """Serve an app principal (arcui.principals) or send its refusal."""
+        principal = await authenticate_principal(request, token)
+        if isinstance(principal, Response):
+            return principal
+        root = causal.root("app", principal.did, on_behalf_of=principal.on_behalf_of)
+        with causal.bind(root):
+            response = await call_next(request)
+            record_unaudited_refusal(request, response.status_code)
+            return response
+
+    async def _session_user(self, request: Request, token: str, session: Session) -> Any:
+        """The live account behind a session, or the 401/503 to send instead."""
+        factory = getattr(request.app.state, "user_store_factory", None)
+        if factory is None:
+            return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
+        try:
+            user = await asyncio.to_thread(lambda: factory().get(session.email))
+        except Exception:
+            logger.error("auth.authority_unavailable path=%s", request.url.path)
+            return JSONResponse({"error": "Account authority is unavailable"}, status_code=503)
+        if user is None or user.disabled or user.did != session.did:
+            self._auth.sessions.revoke(token)
+            return JSONResponse({"error": "Session is no longer authorized"}, status_code=401)
+        return user
 
     @staticmethod
     def _set_session_id(request: Request, token: str) -> None:

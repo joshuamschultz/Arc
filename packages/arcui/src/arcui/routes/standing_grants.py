@@ -21,12 +21,12 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.acting import acting_identity
 from arcui.audit import emit_mutation_audit
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.standing_grants")
 
-_OPERATOR_DID = "did:arc:ui:operator"
 _STATUSES = {"active", "revoked"}
 
 
@@ -77,7 +77,9 @@ async def revoke_standing_grant(request: Request) -> JSONResponse:
             detail="viewer role",
         )
         return _error("operator_role_required", 403)
-    revoked = await standing_store(request).revoke(grant_id, actor_did=_OPERATOR_DID)
+    revoked = await standing_store(request).revoke(
+        grant_id, actor_did=acting_identity(request).actor_did
+    )
     if revoked is None:
         return _error("standing_grant_not_active", 404)
     emit_mutation_audit(

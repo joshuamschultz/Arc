@@ -29,6 +29,7 @@ from uuid import uuid4
 
 from arcstore.runs import NodeState
 from arcteam.workflow import explain_node_error, run_failure_reason
+from arcteam.workflow.errors import GateNotAuthorizedError, WorkflowError
 from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
 from arctrust import sanitize_error_text
@@ -316,6 +317,38 @@ class DashboardWorkflowPlane:
         detail["nodes"] = [_explained(node) for node in nodes.values()]
         return detail
 
+    async def workflow_owner_handle(self, workflow_id: str) -> str | None:
+        """The ``@owner`` of the workflow's current definition; None when unloadable."""
+        bundle = self._load(workflow_id)
+        return None if bundle is None else _text_or_none(bundle.definition.owner)
+
+    async def run_owner_handle(self, run_id: str) -> str | None:
+        """The ``@owner`` of the definition version this run is pinned to.
+
+        The run pins a content hash and a version: the current bundle answers
+        only when its hash is the pinned one, otherwise the retained revision
+        of the pinned version does. Neither readable -> None (fail closed), so
+        an owner change never re-homes a past run to the new owner.
+        """
+        run = await self._runs.record(run_id)
+        if run is None:
+            return None
+        bundle = self._load(run.workflow_id)
+        if bundle is not None and bundle.content_hash == run.content_hash:
+            return _text_or_none(bundle.definition.owner)
+        try:
+            pinned = self._definitions.load_version(run.workflow_id, run.workflow_version)
+        except WorkflowError:
+            return None
+        return _text_or_none(pinned.owner)
+
+    async def gate_owner_did(self, task_id: str) -> str | None:
+        """The owner agent DID the runner wrote on a gate row; None otherwise."""
+        task = await self._tasks.get(task_id)
+        if task is None or str(task.metadata.get("node_kind", "")) != "gate":
+            return None
+        return _text_or_none(task.owner_did)
+
     async def read_file(self, workflow_id: str, path: str) -> dict[str, Any] | None:
         """One companion file's text — the prompt a node actually runs.
 
@@ -570,25 +603,20 @@ class DashboardWorkflowPlane:
     ) -> ControlPlaneResult:
         """Relay the reviewer's choice. The plane decides what it means (REQ-246).
 
-        Only an operator session reaches this (the route gates on the operator
-        role), so the decider carries the operator role — the one authority that
-        decides every gate.
+        The decider is the acting identity: its DID and its own roles (an app
+        adds none), so the control plane's approver list decides who may
+        resolve. A refusal there is ``forbidden``.
         """
-        from arcteam.workflow.control_plane import OPERATOR_ROLE
-        from arcteam.workflow.errors import GateNotAuthorizedError
-
         try:
             result = await self._plane.resolve_gate(
                 task_id,
                 decision=decision,
                 notes=notes,
                 actor_did=actor.did,
-                actor_roles=frozenset({OPERATOR_ROLE}),
+                actor_roles=actor.roles,
             )
-        except GateNotAuthorizedError as exc:
-            return ControlPlaneResult(
-                errors=[WorkflowFieldError(node_id="", field="actor", error=str(exc))]
-            )
+        except GateNotAuthorizedError:
+            return ControlPlaneResult(forbidden=True)
         if not result.ok:
             return _errors(result)
         return ControlPlaneResult(value={} if result.run is None else _run_summary(result.run))
@@ -667,6 +695,11 @@ class DashboardWorkflowPlane:
             return _errors(result)
         value = await self.get_workflow(workflow_id, actor=OperatorActor(did="", session_id=""))
         return ControlPlaneResult(value=value or {"id": workflow_id})
+
+
+def _text_or_none(value: object) -> str | None:
+    """A non-empty string as itself; anything else (None, empty) as None."""
+    return value if isinstance(value, str) and value else None
 
 
 def _placeholder_refusal(owner: str) -> ControlPlaneResult | None:
@@ -914,6 +947,10 @@ def build_dashboard_plane(
         runner=runner,
         runs=runner.runs,
         tier=runner.tier,
+        # The runner's sink: the dashboard's workflow.gate.* / workflow.run.*
+        # records (who decided, for whom, via which app) land beside the
+        # runner's own instead of in a NullSink.
+        audit_sink=runner.audit_sink,
     )
     return DashboardWorkflowPlane(
         plane=plane,

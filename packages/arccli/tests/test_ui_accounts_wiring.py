@@ -87,3 +87,25 @@ def test_ui_start_survives_a_broken_accounts_block(monkeypatch: pytest.MonkeyPat
     config_file("arcagent.toml").write_text('[security.accounts]\nvault_url = "http://x"\n')
     _, kwargs = _start_ui(monkeypatch)
     assert kwargs["user_store_factory"] is None
+
+
+def test_ui_start_passes_the_principal_store_of_the_same_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPEC-087: app principals live in the account authority the People tab uses."""
+    with enrolled_deployment(tmp_path, monkeypatch):
+        app, kwargs = _start_ui(monkeypatch)
+    users = kwargs["user_store_factory"]
+    assert kwargs["principal_store_factory"] == users.principals
+    assert app.state.principal_store_factory is kwargs["principal_store_factory"]
+    assert app.state.principals_config.tier == "personal"
+
+
+def test_ui_start_without_accounts_has_no_principal_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_file("arcagent.toml").parent.mkdir(parents=True, exist_ok=True)
+    config_file("arcagent.toml").write_text('[security]\ntier = "personal"\n')
+    app, kwargs = _start_ui(monkeypatch)
+    assert kwargs["principal_store_factory"] is None
+    assert app.state.principal_store_factory is None

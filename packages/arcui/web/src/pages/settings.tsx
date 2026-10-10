@@ -22,6 +22,8 @@ import { MemoryPromotionPanel } from "@/components/memory-promotion-panel";
 import { ConfigFilePanel } from "@/components/settings-view/config-file-panel";
 import { PublicAccessPanel } from "@/components/settings-view/public-access-panel";
 import { MaintenancePanel } from "@/components/maintenance/maintenance-panel";
+import { MyDelegationsPanel } from "@/components/my-delegations-panel";
+import { AppsPanel } from "@/pages/apps";
 import { UsersPanel } from "@/pages/users";
 import { useOperatorMode } from "@/hooks/use-operator-mode";
 import { useRoster } from "@/lib/queries";
@@ -139,10 +141,15 @@ export function SettingsPage() {
               {/* Where the dashboard is reached from; sign-in return addresses
                   and the https certificate hang off it, so it is fleet-wide too. */}
               <TabsTrigger value="access">Access</TabsTrigger>
+              {/* Apps call Arc with their own credential; they sit beside the
+                  people who sign in (SPEC-087). */}
+              <TabsTrigger value="apps">Apps</TabsTrigger>
               <TabsTrigger value="people">People</TabsTrigger>
               {/* Updates, modules, blueprints and the team list: upkeep that used
                   to need a terminal. Fleet-wide, so it shows in every scope. */}
               <TabsTrigger value="maintenance">Maintenance</TabsTrigger>
+              {/* The signed-in person's own account: apps they let decide for them. */}
+              <TabsTrigger value="my-delegations">My delegations</TabsTrigger>
             </TabsList>
           </div>
           {visibleFiles.map((f) => (
@@ -217,8 +224,14 @@ export function SettingsPage() {
               <WebSearchProviderPicker editable={operatorMode} />
             </div>
           </TabsContent>
+          <TabsContent value="apps" className="flex-1 overflow-auto p-4 md:p-6">
+            <AppsPanel />
+          </TabsContent>
           <TabsContent value="people" className="flex-1 overflow-auto p-4 md:p-6">
             <UsersPanel />
+          </TabsContent>
+          <TabsContent value="my-delegations" className="flex-1 overflow-auto p-4 md:p-6">
+            <MyDelegationsPanel />
           </TabsContent>
           <TabsContent value="maintenance" className="flex-1 overflow-auto p-4 md:p-6">
             <MaintenancePanel editable={operatorMode} />

@@ -80,6 +80,9 @@ class TestEmitMutationAudit:
         assert name == "ui.mutation"
         assert details == {
             "actor_role": "operator",
+            "actor_did": "did:arc:ui:session:sess-123",
+            "on_behalf_of": None,
+            "via_app": None,
             "session_id": "sess-123",
             "target": "channel://work",
             "operation": "channel.create",

@@ -17,11 +17,12 @@ cannot mint it.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from arcstore.approvals import ApprovalStore
+from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.standing_grants import StandingGrantRefusedError, approve_always
 from arctrust import operator_signer_for
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
@@ -29,13 +30,19 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.acting import ActingIdentity, Refusal, acting_identity, decider
 from arcui.audit import emit_mutation_audit
+from arcui.principals import PRINCIPAL_ISSUE_TOOL, Scope
+from arcui.routes.principals import activate_for_approval, revoke_for_denial
 from arcui.routes.standing_grants import grant_row, standing_store
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.approvals")
 
-_OPERATOR_DID = "did:arc:ui:operator"
+# Approvals are not an app scope (the middleware refuses principals on these
+# routes), so ``decider`` only applies its static-token rules here (REQ-571).
+# A SPEC-035 approval is a human gate decision; its audit rows name that scope.
+_DECISION_SCOPE = Scope.GATES_RESOLVE
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -44,6 +51,17 @@ def _error(message: str, status: int) -> JSONResponse:
 
 def _is_operator(request: Request) -> bool:
     return getattr(request.state, "role", None) == "operator"
+
+
+async def _decision(request: Request) -> ActingIdentity | JSONResponse:
+    """Who decides, or the refusal response (``decider`` wrote its audit row).
+
+    Off the event loop: ``decider`` may read the account authority.
+    """
+    decided = await asyncio.to_thread(decider, request, _DECISION_SCOPE)
+    if isinstance(decided, Refusal):
+        return JSONResponse({"error": decided.code}, status_code=decided.status)
+    return decided
 
 
 def _store(request: Request) -> ApprovalStore:
@@ -267,9 +285,42 @@ async def acknowledge_notification(request: Request) -> JSONResponse:
     event_id = request.path_params["event_id"]
     hub = getattr(request.app.state, "approval_notification_hub", None)
     acknowledge = getattr(hub, "acknowledge", None) if hub is not None else None
-    if not callable(acknowledge) or not await acknowledge(event_id):
+    actor_did = acting_identity(request).actor_did
+    if not callable(acknowledge) or not await acknowledge(event_id, actor_did=actor_did):
         return _error("notification_not_pending", 404)
     return JSONResponse({"acknowledged": True, "event_id": event_id})
+
+
+async def _apply_tool_effect(
+    request: Request, row: PendingApproval, target: str, actor_did: str
+) -> JSONResponse | None:
+    """Run the side effect an approval carries beyond its grant; a refusal response or None.
+
+    A workflow-signing request is the one approval whose grant is not the
+    whole effect: approving it SIGNS the bundle. The signature happens here,
+    in the operator-authenticated path, and never through the control plane —
+    the operation set an agent can reach must stay one that cannot sign
+    (REQ-224). The row's call_hash is the definition's content hash, so a
+    definition edited since the request no longer matches and is refused.
+
+    SPEC-087 COMP-010: an app principal issue row activates the pending record
+    it names, only while that record still hashes to the row's call_hash.
+    """
+    if row.tool == WORKFLOW_SIGN_TOOL:
+        signed = _sign_requested_workflow(request, row)
+        if signed is None:
+            return None
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation="approval.approve",
+            outcome="denied",
+            detail=signed,
+        )
+        return _error(signed, 409)
+    if row.tool == PRINCIPAL_ISSUE_TOOL:
+        return await activate_for_approval(request, row, actor_did)
+    return None
 
 
 async def approve_request(request: Request) -> JSONResponse:
@@ -285,6 +336,9 @@ async def approve_request(request: Request) -> JSONResponse:
             detail="viewer role",
         )
         return _error("operator_role_required", 403)
+    decided = await _decision(request)
+    if isinstance(decided, JSONResponse):
+        return decided
 
     store = _store(request)
     row = await store.get(approval_id)
@@ -310,30 +364,16 @@ async def approve_request(request: Request) -> JSONResponse:
         )
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
 
-    # A workflow-signing request is the one approval whose grant is not the
-    # whole effect: approving it SIGNS the bundle. The signature happens here,
-    # in the operator-authenticated path, and never through the control plane —
-    # the operation set an agent can reach must stay one that cannot sign
-    # (REQ-224). The row's call_hash is the definition's content hash, so a
-    # definition edited since the request no longer matches and is refused.
-    if row.tool == WORKFLOW_SIGN_TOOL:
-        signed = _sign_requested_workflow(request, row)
-        if signed is not None:
-            emit_mutation_audit(
-                request,
-                target=target,
-                operation="approval.approve",
-                outcome="denied",
-                detail=signed,
-            )
-            return _error(signed, 409)
+    refused = await _apply_tool_effect(request, row, target, decided.actor_did)
+    if refused is not None:
+        return refused
 
     grant = sign_approval_for_hash(row.call_hash, operator)
     updated = await store.resolve(
         approval_id,
         status="approved",
         actor_did=operator.did,
-        resolved_by=operator.did,
+        resolved_by=decided.actor_did,
         grant=grant_to_wire(grant),
     )
     if updated is None:
@@ -360,6 +400,9 @@ async def always_allow_request(request: Request) -> JSONResponse:
             detail="viewer role",
         )
         return _error("operator_role_required", 403)
+    decided = await _decision(request)
+    if isinstance(decided, JSONResponse):
+        return decided
     store = _store(request)
     row = await store.get(approval_id)
     if row is None:
@@ -374,7 +417,9 @@ async def always_allow_request(request: Request) -> JSONResponse:
         logger.exception("operator key unavailable for standing approval")
         return _error(f"operator_key_unavailable: {type(exc).__name__}", 500)
     try:
-        resolved, stored = await approve_always(store, standing_store(request), row, operator)
+        resolved, stored = await approve_always(
+            store, standing_store(request), row, operator, resolved_by=decided.actor_did
+        )
     except StandingGrantRefusedError as exc:
         emit_mutation_audit(
             request,
@@ -409,12 +454,24 @@ async def deny_request(request: Request) -> JSONResponse:
             detail="viewer role",
         )
         return _error("operator_role_required", 403)
+    decided = await _decision(request)
+    if isinstance(decided, JSONResponse):
+        return decided
 
     store = _store(request)
-    if await store.get(approval_id) is None:
+    row = await store.get(approval_id)
+    if row is None:
         return _error("not found", 404)
+    # Revoke before the row closes: a race can only leave the app revoked.
+    if row.tool == PRINCIPAL_ISSUE_TOOL and row.status == "pending":
+        refused = await revoke_for_denial(request, row, decided.actor_did)
+        if refused is not None:
+            return refused
     updated = await store.resolve(
-        approval_id, status="denied", actor_did=_OPERATOR_DID, resolved_by=_OPERATOR_DID
+        approval_id,
+        status="denied",
+        actor_did=decided.actor_did,
+        resolved_by=decided.actor_did,
     )
     if updated is None:
         return _error("approval_not_pending", 409)

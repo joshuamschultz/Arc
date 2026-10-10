@@ -22,6 +22,10 @@ class _User:
     is_operator: bool
     disabled: bool = False
 
+    @property
+    def roles(self) -> tuple[str, ...]:
+        return ("operator",) if self.is_operator else ("viewer",)
+
 
 class _Users:
     def __init__(self) -> None:

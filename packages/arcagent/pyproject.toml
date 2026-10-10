@@ -43,6 +43,8 @@ dependencies = [
     # every gateway deployment rather than only an optional memory extra.
     "pypdf>=4,<7",
     "psutil>=7,<8",
+    # Workflow node input/output schemas are validated in the tasks module.
+    "jsonschema>=4.26,<5",
 ]
 
 [project.optional-dependencies]

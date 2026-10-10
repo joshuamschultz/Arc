@@ -28,8 +28,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.audit import emit_mutation_audit
-from arcui.auth import ui_session_actor
+from arcui.audit import emit_mutation_audit, ui_session_actor
 from arcui.identity import resolve_agent_identity
 from arcui.routes.trust import operator_signer_for_request
 from arcui.schemas import (

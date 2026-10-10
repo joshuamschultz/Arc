@@ -16,6 +16,7 @@ from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 from starlette.applications import Starlette
 from starlette.testclient import TestClient
 
+from arcui import acting
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 from arcui.routes.agent_detail import inbox as inbox_routes
@@ -72,6 +73,8 @@ def audits(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         recorded.append(fields)
 
     monkeypatch.setattr(inbox_routes, "emit_mutation_audit", record)
+    # Compose's access refusal is audited by the shared control check (SPEC-087).
+    monkeypatch.setattr(acting, "emit_mutation_audit", record)
     return recorded
 
 

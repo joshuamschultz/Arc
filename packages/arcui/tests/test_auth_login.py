@@ -336,7 +336,7 @@ def test_authority_outage_fails_closed_for_existing_session(client, authority, m
     token = client.post(
         "/api/auth/login", json={"email": "boss@example.com", "password": GOOD}
     ).json()["token"]
-    anchor = authority().__dict__["_anchor"]
+    anchor = authority()._state.__dict__["_anchor"]
     monkeypatch.setattr(anchor, "latest", lambda: (_ for _ in ()).throw(RuntimeError("offline")))
     response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 503

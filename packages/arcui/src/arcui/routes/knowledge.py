@@ -32,6 +32,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
+from arcui.acting import acting_identity
 from arcui.audit import emit_mutation_audit
 from arcui.routes.connected_data import connected_data_service
 from arcui.schemas import ErrorResponse
@@ -224,7 +225,7 @@ async def patch_memory(request: Request) -> JSONResponse:
         )
 
     op = _operator_for(Path(agent.workspace_path), agent.did)
-    actor_did = getattr(agent, "did", "") or "did:arc:ui:operator"
+    actor_did = acting_identity(request).actor_did
     results: list[MutationResult] = []
     try:
         if text is not None:
@@ -262,7 +263,7 @@ async def delete_memory(request: Request) -> JSONResponse:
         return _agent_not_found(agent_id)
 
     op = _operator_for(Path(agent.workspace_path), agent.did)
-    actor_did = getattr(agent, "did", "") or "did:arc:ui:operator"
+    actor_did = acting_identity(request).actor_did
     try:
         result = op.delete_entry(entry_id, actor_did=actor_did)
     except Exception as exc:
@@ -425,7 +426,7 @@ async def _review_action(request: Request, action: str) -> JSONResponse:
             status_code=400,
         )
     op = _review_operator(agent)
-    actor_did = "did:arc:ui:operator"
+    actor_did = acting_identity(request).actor_did
     try:
         if action == "merge":
             result = op.merge_duplicates(slugs, actor_did=actor_did)

@@ -42,14 +42,20 @@ gate_control_plane`` are the injection points — ``None`` degrades every
 route to 503 ``workflow_control_plane_unavailable`` (fail-open dashboard,
 matching the ``messaging_service is None`` degrade pattern in team_chat.py).
 
-**Identity attribution:** arcui holds no per-human agent identity (ADR-019).
-Every operator-gated mutation here is attributed to the fixed on-box
-operator DID plus the auth layer's session id — the same attribution model
-``tasks.py``'s ``_CREATOR`` and ``approvals.py``'s ``_OPERATOR_DID`` already
-use. REQ-245's "authenticated identity of the deciding human" is satisfied
-at the resolution this deployment's auth layer actually offers: role
-(operator) + session id, not a distinct per-browser-user DID — the dashboard
-has never distinguished individual humans behind the one operator token.
+**Identity attribution (SPEC-087 COMP-008):** every control-plane call carries
+one :class:`OperatorActor` built from :func:`arcui.acting.acting_identity` —
+the signed-in account's DID, the session pseudo-DID of the static token, or
+for an app the person it acts for (``on_behalf_of``) and the app itself
+(``via_app``). The roles handed to the gate control plane are that identity's
+roles, so an app adds no authority to the person it acts for.
+
+**App-reachable handlers:** ``POST /api/workflows/{id}/run``, ``GET
+/api/workflow-runs/{id}`` and ``POST /api/workflow-tasks/{id}/gate`` are rows
+of ``arcui.principals.APP_ROUTES`` with no agent in the path, so each one
+resolves the target's owning agent itself (workflow owner, run owner, gate
+row owner) and binds the scope to it; an unresolvable target is 404 to an
+app. A gate decision also passes :func:`arcui.acting.decider`, and the
+control plane's approver list (a refusal there is a 403).
 """
 
 from __future__ import annotations
@@ -63,29 +69,40 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
+from arcui.acting import (
+    ActingIdentity,
+    Refusal,
+    Scope,
+    acting_identity,
+    app_target_refusal,
+    decider,
+)
 from arcui.audit import emit_mutation_audit, emit_read_audit
+from arcui.principals import roster_did
 from arcui.routes.trust import operator_signer_for_request
 from arcui.schemas import ErrorResponse
 
-# arcui holds no agent identity; operator-originated writes are attributed to
-# this fixed DID (mirrors `_CREATOR` in tasks.py / `_OPERATOR_DID` in
-# approvals.py).
-_OPERATOR_DID = "did:arc:ui:operator"
-
 GateDecision = Literal["approve", "fail_run", "return_for_revision"]
+GATE_OPERATION = "gate.resolve"
 
 
 @dataclass(frozen=True)
 class OperatorActor:
     """The acting identity threaded into every control-plane call.
 
-    ``did`` is the fixed on-box operator identity (see module docstring);
-    ``session_id`` is the auth layer's per-session correlation id, which is
-    what the audit trail actually keys distinct dashboard sessions on.
+    The one actor type of this adapter (SPEC-087 COMP-008). ``did`` is who is
+    acting (see module docstring); ``session_id`` is the auth layer's
+    per-session correlation id; ``on_behalf_of`` and ``via_app`` name the
+    person and the app when an app acts for someone; ``roles`` are the acting
+    identity's roles — empty by default, so an actor built without them is
+    no approver of anything (fail closed).
     """
 
     did: str
     session_id: str
+    on_behalf_of: str | None = None
+    via_app: str | None = None
+    roles: frozenset[str] = frozenset()
 
 
 class WorkflowFieldError(BaseModel):
@@ -111,7 +128,9 @@ class ControlPlaneResult:
     """The uniform outcome shape every control-plane operation returns.
 
     Exactly one of ``value`` / ``errors`` is populated on success/rejection;
-    ``conflict`` and ``not_found`` are exclusive terminal flags. The route
+    ``conflict``, ``not_found`` and ``forbidden`` are exclusive terminal flags
+    (``forbidden``: the control plane refused this actor, e.g. not a gate
+    approver). The route
     layer's entire job is translating this into an HTTP status — it never
     decides *whether* a request was valid, only how to report what the
     control plane already decided.
@@ -121,6 +140,7 @@ class ControlPlaneResult:
     errors: list[WorkflowFieldError] | None = None
     conflict: bool = False
     not_found: bool = False
+    forbidden: bool = False
 
 
 @runtime_checkable
@@ -213,6 +233,14 @@ class WorkflowControlPlane(Protocol):
         """One run's detail: status, path taken, per-node status."""
         ...
 
+    async def workflow_owner_handle(self, workflow_id: str) -> str | None:
+        """The owner handle (``@name``) of a workflow's definition; None when unknown."""
+        ...
+
+    async def run_owner_handle(self, run_id: str) -> str | None:
+        """The owner handle of the definition a run is pinned to; None when unknown."""
+        ...
+
     async def request_signature(
         self, workflow_id: str, *, actor: OperatorActor
     ) -> ControlPlaneResult:
@@ -293,6 +321,10 @@ class GateControlPlane(Protocol):
         """
         ...
 
+    async def gate_owner_did(self, task_id: str) -> str | None:
+        """The owning agent DID of a gate row; None when not a gate or unowned."""
+        ...
+
 
 def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
@@ -306,9 +338,25 @@ def _is_operator(request: Request) -> bool:
     return getattr(request.state, "role", None) == "operator"
 
 
+def _actor_of(identity: ActingIdentity) -> OperatorActor:
+    return OperatorActor(
+        did=identity.actor_did,
+        session_id=identity.session_id,
+        on_behalf_of=identity.on_behalf_of,
+        via_app=identity.via_app,
+        roles=identity.roles,
+    )
+
+
 def _actor(request: Request) -> OperatorActor:
-    session_id = getattr(request.state, "session_id", None) or "unknown"
-    return OperatorActor(did=_OPERATOR_DID, session_id=session_id)
+    return _actor_of(acting_identity(request))
+
+
+async def _owner_did_of(request: Request, handle: str | None) -> str | None:
+    """A definition's ``@owner`` handle as the roster agent's DID; None when unknown."""
+    if handle is None:
+        return None
+    return await roster_did(request, handle.removeprefix("@"))
 
 
 def _control_plane(request: Request) -> WorkflowControlPlane | None:
@@ -357,6 +405,11 @@ def _relay(
             request, target=target, operation=operation, outcome="denied", detail="not_found"
         )
         return _error("not found", 404)
+    if result.forbidden:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail="not_authorized"
+        )
+        return _error("not_authorized", 403)
     if result.conflict:
         emit_mutation_audit(
             request,
@@ -530,16 +583,27 @@ async def unarchive_workflow(request: Request) -> JSONResponse:
 
 
 async def run_workflow(request: Request) -> JSONResponse:
-    """POST /api/workflows/{id}/run — start a run of a signed definition (operator only)."""
+    """POST /api/workflows/{id}/run — start a run of a signed definition.
+
+    Operator, or an app holding ``workflows:run`` on the workflow's owner agent.
+    """
     workflow_id = request.path_params["id"]
     target = f"workflow:{workflow_id}"
-    denial = _require_operator(request, target=target, operation="workflow.run")
+    plane = _control_plane(request)
+
+    async def _owner() -> str | None:
+        if plane is None:
+            return None
+        return await _owner_did_of(request, await plane.workflow_owner_handle(workflow_id))
+
+    denial = await app_target_refusal(
+        request, Scope.WORKFLOWS_RUN, _owner, target=target, operation="workflow.run"
+    )
     if denial is not None:
         return denial
 
     body = await _json_body(request) or {}
 
-    plane = _control_plane(request)
     if plane is None:
         return _error("workflow_control_plane_unavailable", 503)
 
@@ -565,14 +629,25 @@ async def list_runs(request: Request) -> JSONResponse:
 
 
 async def get_run(request: Request) -> JSONResponse:
-    """GET /api/workflow-runs/{id} — one run's live/final detail, path taken (operator only)."""
+    """GET /api/workflow-runs/{id} — one run's live/final detail, path taken.
+
+    Operator, or an app holding ``runs:read`` on the run's owner agent.
+    """
     run_id = request.path_params["id"]
     target = f"workflow_run:{run_id}"
-    denial = _require_operator(request, target=target, operation="run.read")
+    plane = _control_plane(request)
+
+    async def _owner() -> str | None:
+        if plane is None:
+            return None
+        return await _owner_did_of(request, await plane.run_owner_handle(run_id))
+
+    denial = await app_target_refusal(
+        request, Scope.RUNS_READ, _owner, target=target, operation="run.read"
+    )
     if denial is not None:
         return denial
 
-    plane = _control_plane(request)
     if plane is None:
         return _error("workflow_control_plane_unavailable", 503)
 
@@ -649,18 +724,18 @@ async def _accept_side_effect_repeat(request: Request) -> bool | None:
 
 
 async def resolve_gate(request: Request) -> Response:
-    """POST /api/workflow-tasks/{id}/gate — resolve a gate node (operator only).
+    """POST /api/workflow-tasks/{id}/gate — resolve a gate node.
 
     Body: ``{"decision": "approve"|"fail_run"|"return_for_revision", "notes"?:
     str}``. No agent-callable tool reaches this operation (REQ-246) — only
-    this operator-gated HTTP route and the equivalent CLI/channel-card
-    caller of the same control-plane method.
+    this HTTP route and the equivalent CLI/channel-card caller of the same
+    control-plane method. Who may decide: :func:`admit_gate_decider`.
     """
     task_id = request.path_params["id"]
     target = f"workflow_task:{task_id}"
-    denial = _require_operator(request, target=target, operation="gate.resolve")
-    if denial is not None:
-        return denial
+    admitted = await admit_gate_decider(request, task_id, target=target)
+    if isinstance(admitted, Response):
+        return admitted
 
     body = await _json_body(request)
     decision = (body or {}).get("decision")
@@ -670,14 +745,48 @@ async def resolve_gate(request: Request) -> Response:
     if not isinstance(notes, str):
         return _error("notes must be a string", 400)
 
+    result = await admitted.plane.resolve_gate(
+        task_id, decision=decision, notes=notes, actor=admitted.actor
+    )
+    return _relay(request, result, target=target, operation=GATE_OPERATION, ok_status=200)
+
+
+@dataclass(frozen=True)
+class GateDecider:
+    """A caller admitted to decide one gate: the plane to relay to, and as whom."""
+
+    plane: GateControlPlane
+    actor: OperatorActor
+
+
+async def admit_gate_decider(
+    request: Request, task_id: str, *, target: str
+) -> GateDecider | Response:
+    """Who may decide a gate (this route and ``POST /api/tasks/{id}/approve|reject``).
+
+    In order, each refusal audited once: ``gates:resolve`` bound to the gate
+    row's owner agent (an app on an unknown gate gets 404); the plane is
+    present (503); :func:`arcui.acting.decider` (named person, federal
+    delegation). The control plane then checks its approver list against the
+    returned actor's DID and roles — a refusal there is a 403 from
+    :func:`_relay`.
+    """
     plane = _gate_plane(request)
+
+    async def _owner() -> str | None:
+        return None if plane is None else await plane.gate_owner_did(task_id)
+
+    denial = await app_target_refusal(
+        request, Scope.GATES_RESOLVE, _owner, target=target, operation=GATE_OPERATION
+    )
+    if denial is not None:
+        return denial
     if plane is None:
         return _error("gate_control_plane_unavailable", 503)
-
-    result = await plane.resolve_gate(
-        task_id, decision=decision, notes=notes, actor=_actor(request)
-    )
-    return _relay(request, result, target=target, operation="gate.resolve", ok_status=200)
+    identity = await asyncio.to_thread(decider, request, Scope.GATES_RESOLVE)
+    if isinstance(identity, Refusal):
+        return JSONResponse({"error": identity.code}, status_code=identity.status)
+    return GateDecider(plane=plane, actor=_actor_of(identity))
 
 
 async def request_signature(request: Request) -> JSONResponse:
@@ -916,10 +1025,12 @@ routes = [
 __all__ = [
     "ControlPlaneResult",
     "GateControlPlane",
+    "GateDecider",
     "GateDecision",
     "OperatorActor",
     "WorkflowControlPlane",
     "WorkflowFieldError",
+    "admit_gate_decider",
     "archive_workflow",
     "cancel_run",
     "create_from_template",

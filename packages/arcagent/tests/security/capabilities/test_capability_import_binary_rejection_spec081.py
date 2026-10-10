@@ -16,7 +16,7 @@ RED today:
   - the already-rejected cases raise a GENERIC message that does not name the
     offending path, so REQ-400's "report the specific offending path" fails.
 
-Abuse cases here should be mirrored into ``scripts/run_adversarial_tests.py``
+Abuse cases here should be mirrored into ``tests/run_adversarial_tests.py``
 when T-1054 lands.
 """
 

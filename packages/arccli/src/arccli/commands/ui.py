@@ -18,7 +18,7 @@ import os
 import sys
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from arctrust.paths import ui_token_file
 from arcui._constants import BOOTSTRAP_HASH_KEY, LOOPBACK_HOSTS
@@ -27,6 +27,10 @@ from arccli.commands._shared import dispatch
 from arccli.commands._shared import err as _err
 from arccli.commands._shared import write as _write
 from arccli.service_watchdog import ServiceWatchdog, enable_fault_dumps
+
+if TYPE_CHECKING:
+    from arctrust import PrincipalStore
+    from arcui.principals import PrincipalsConfig
 
 # Valid layer values — enforced at parse time.
 _VALID_LAYERS = ("llm", "run", "agent", "team")
@@ -302,8 +306,12 @@ def _start(args: argparse.Namespace) -> None:
     scheme = "https" if tls is not None else "http"
 
     anchor_audit = _AppAuditSink()
+    accounts = _account_store_factory(anchor_audit)
     app = create_app(
-        user_store_factory=_account_store_factory(anchor_audit),
+        user_store_factory=accounts,
+        # SPEC-087: app principals live in the same account authority.
+        principal_store_factory=_principal_store_factory(accounts),
+        principals_config=_principals_config(gateway_config),
         auth_config=auth,
         max_agents=max_agents,
         team_root=team_root,
@@ -467,6 +475,42 @@ def _account_store_factory(audit_sink: Any) -> Any:
     except AccountsConfigError as exc:
         _logger.error("accounts: %s; people management is unavailable", exc)
         return None
+
+
+def _principal_store_factory(accounts: Any) -> Callable[[], PrincipalStore] | None:
+    """The app-principal store bound to the account authority, or None (apps get 503)."""
+    from arccli.commands._accounts import _AuthorityFactory
+
+    return accounts.principals if isinstance(accounts, _AuthorityFactory) else None
+
+
+def _principals_config(gateway_config: Any | None) -> PrincipalsConfig:
+    """``[ui.principals]`` validated and stamped with the deployment's tier.
+
+    Same resolution as :func:`_public_base_url`: the default start builds an
+    in-memory gateway config, so ``gateway.toml`` is read through the one
+    Arc-home resolver. The tier is the stricter of the effective deployment
+    tier and the running gateway's; a ``tier`` key in the section is refused so
+    a config file cannot loosen it. An invalid section stops the start.
+    """
+    import arcagent
+    from arcgateway.config import GatewayConfig
+    from arcui.principals import PrincipalsConfig
+    from arcui.public_address import effective_tier
+    from pydantic import ValidationError
+
+    section = dict(gateway_config.ui.principals) if gateway_config is not None else {}
+    if not section:
+        section = dict(GatewayConfig.load().ui.principals)
+    if "tier" in section:
+        _err("arc ui start: [ui.principals] can not set the tier; it is the deployment's")
+        raise SystemExit(1)
+    tier = arcagent.stricter_tier(effective_tier(), _deployment_tier(gateway_config))
+    try:
+        return PrincipalsConfig.model_validate({**section, "tier": tier})
+    except ValidationError as exc:
+        _err(f"arc ui start: [ui.principals] is invalid — {exc.errors()[0]['msg']}")
+        raise SystemExit(1) from exc
 
 
 class _AppAuditSink:

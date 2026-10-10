@@ -22,6 +22,7 @@ const INITIATORS = [
   { value: 'agent', label: 'Agent' },
   { value: 'operator', label: 'Operator' },
   { value: 'ui_session', label: 'UI session' },
+  { value: 'app', label: 'App' },
   { value: 'scheduler', label: 'Scheduler' },
   { value: 'workflow', label: 'Workflow' },
   { value: 'connector_probe', label: 'Connector probe' },

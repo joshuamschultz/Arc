@@ -55,7 +55,8 @@ from arcui.credential_renewer import (
     migrate_or_degrade,
 )
 from arcui.observe import Observe
-from arcui.public_address import PublicAddress
+from arcui.principals import PrincipalRateLimiter, PrincipalsConfig, new_replay_cache
+from arcui.public_address import PublicAddress, effective_tier
 from arcui.registry import AgentRegistry
 from arcui.report_authorization import ReportReadAuthority, ReportReadWorkerPool
 from arcui.routes import agent_detail as agent_detail_routes
@@ -86,6 +87,7 @@ from arcui.routes import maintenance as maintenance_routes
 from arcui.routes import mcp as mcp_routes
 from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
+from arcui.routes import principals as principal_routes
 from arcui.routes import queue as queue_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import source_guide as source_guide_routes
@@ -279,6 +281,8 @@ def create_app(
     auth_config: AuthConfig | None = None,
     operator_signer_factory: Callable[[], arctrust.Signer] | None = None,
     user_store_factory: Callable[[], arctrust.UserStore] | None = None,
+    principal_store_factory: Callable[[], arctrust.PrincipalStore] | None = None,
+    principals_config: PrincipalsConfig | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
     control: arcagent.ControlArtifactBinding | None = None,
     report_read_authority: ReportReadAuthority | None = None,
@@ -317,6 +321,11 @@ def create_app(
 
     Args:
         auth_config: Token/role configuration. Auto-generated if None.
+        principal_store_factory: SPEC-087 app-principal store, opened per request
+            by the principal path of AuthMiddleware. ``None`` answers every app
+            credential 503 ``account_authority_unavailable``.
+        principals_config: ``[ui.principals]`` stamped with the deployment tier.
+            ``None`` uses the defaults at the effective deployment tier.
         queue_coordinator: Initialized coordinator shared with embedded agents.
         queue_tenant_id: Trusted deployment tenant bound to that coordinator.
         queue_owner_epoch: Broker-issued lease epoch used by durable queue jobs.
@@ -457,6 +466,8 @@ def create_app(
         *cancellations_routes.routes,
         *capability_imports_routes.routes,
         *trust_routes.routes,
+        # SPEC-087 COMP-011: a signed-in person's own app delegations.
+        *principal_routes.routes,
         *workflows_routes.routes,
         # SPEC-082: the always-on fleet MCP door. Mounted by prefix so the whole
         # remainder (a DID that itself contains a "/") is the sub-path. Matched
@@ -826,6 +837,16 @@ def create_app(
     app.state.auth_config = auth
     app.state.operator_signer_factory = operator_signer_factory
     app.state.user_store_factory = user_store_factory
+    # SPEC-087 COMP-005: the app-principal path of AuthMiddleware. No factory
+    # answers every app credential 503 (never a fallback to static tokens).
+    app.state.principal_store_factory = principal_store_factory
+    app.state.principals_config = principals_config or PrincipalsConfig.model_validate(
+        {"tier": effective_tier()}
+    )
+    app.state.principal_rate_limiter = PrincipalRateLimiter(
+        app.state.principals_config.rate_per_minute
+    )
+    app.state.principal_replay_cache = new_replay_cache()
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
     app.state.control_binding = control
     app.state.schedule_control_authority = None if control is None else control.authority

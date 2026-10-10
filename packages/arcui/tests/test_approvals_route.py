@@ -28,6 +28,7 @@ from starlette.testclient import TestClient
 from arcui.approval_notifications import ApprovalNotificationHub
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
+from arcui.principals import PrincipalsConfig
 
 _AGENT = "did:arc:test:exec/agent1"
 
@@ -85,6 +86,7 @@ def _make_app(
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
+    app.state.principals_config = PrincipalsConfig(tier="personal")
     app.state.approval_store = asyncio.run(_seed_store(tmp_path, call_hash, enriched=enriched))
     return app, auth, app.state.approval_store
 
@@ -141,6 +143,7 @@ def _sign_app(
     app.add_middleware(AuthMiddleware, auth_config=auth)
     app.state.auth_config = auth
     app.state.audit = UIAuditLogger(enabled=False)
+    app.state.principals_config = PrincipalsConfig(tier="personal")
     backend = FakeBackend()
     asyncio.run(backend.start())
     store = ApprovalStore(backend)

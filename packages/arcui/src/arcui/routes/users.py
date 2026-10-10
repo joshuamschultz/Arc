@@ -45,8 +45,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-from arcui.audit import emit_mutation_audit
-from arcui.auth import ui_session_actor
+from arcui.audit import emit_mutation_audit, ui_session_actor
 
 logger = logging.getLogger(__name__)
 

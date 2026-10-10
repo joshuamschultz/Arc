@@ -190,3 +190,26 @@ def test_listening_refused_when_voice_not_connected_to_this_agent(
         "/api/agents/alpha/voice/listening", json={"on": True}, headers=_hdr(auth.operator_token)
     )
     assert reply.status_code == 409
+
+
+async def test_voice_actions_are_attributed_to_the_acting_identity(
+    world: tuple[TestClient, AuthConfig, Path], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SPEC-087 REQ-567: no ad-hoc operator actor; the voice adapter records
+    whoever acts (here the static token's session pseudo-DID)."""
+    client, auth, _gw = world
+    adapter = _attach_adapter(client)
+    actors: list[str] = []
+
+    async def _record(on: bool, *, actor_did: str) -> int:
+        actors.append(actor_did)
+        return 0
+
+    monkeypatch.setattr(adapter, "set_listening", _record)
+    reply = client.post(
+        "/api/agents/alpha/voice/listening", json={"on": False}, headers=_hdr(auth.operator_token)
+    )
+
+    assert reply.status_code == 200, reply.text
+    assert len(actors) == 1
+    assert actors[0].startswith("did:arc:ui:session:"), actors

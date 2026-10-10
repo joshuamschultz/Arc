@@ -26,5 +26,8 @@ def test_actor_verification_precedes_user_store_construction():
         vault_ca_sha256="a" * 64,
     )
     with pytest.raises(AccountAuthorityError, match="actor"):
-        authority._actor_did("client-chosen-did")
-    assert authority._actor_did("trusted-request") == "did:arc:acme:user/verified"
+        authority._actor_did("client-chosen-did", action="users.mutate")
+    assert (
+        authority._actor_did("trusted-request", action="users.mutate")
+        == "did:arc:acme:user/verified"
+    )

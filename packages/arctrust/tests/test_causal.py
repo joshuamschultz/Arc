@@ -118,6 +118,48 @@ class TestAuditEventStamping:
         assert restored.causal == event.causal
 
 
+_APP_DID = "did:arc:t:app/ticketing"
+_PERSON_DID = "did:arc:t:user/alice"
+
+
+class TestAppInitiator:
+    """SPEC-087 REQ-565: an app principal acting for a person is a causal root."""
+
+    def test_root_app_on_behalf_of_person_validates(self) -> None:
+        ctx = causal.root("app", _APP_DID, on_behalf_of=_PERSON_DID)
+        assert ctx.initiator == "app"
+        assert ctx.initiator_id == _APP_DID
+        assert ctx.on_behalf_of == _PERSON_DID
+
+    def test_root_app_alone_validates_with_no_person(self) -> None:
+        ctx = causal.root("app", _APP_DID)
+        assert ctx.initiator == "app"
+        assert ctx.on_behalf_of is None
+
+    def test_event_built_inside_an_app_binding_carries_app_and_person(self) -> None:
+        with causal.bind(causal.root("app", _APP_DID, on_behalf_of=_PERSON_DID)):
+            event = AuditEvent(actor_did=_APP_DID, action="x", target="y", outcome="ok")
+        assert event.causal is not None
+        assert event.causal.initiator == "app"
+        assert event.causal.initiator_id == _APP_DID
+        assert event.causal.on_behalf_of == _PERSON_DID
+
+    def test_refine_inside_an_app_binding_cannot_swap_the_person(self) -> None:
+        with causal.bind(causal.root("app", _APP_DID, on_behalf_of=_PERSON_DID)):
+            with pytest.raises(TypeError):
+                with causal.refine(on_behalf_of="did:arc:t:user/mallory"):
+                    pass
+            with causal.refine(run_id="r1") as child:
+                assert child.initiator == "app"
+                assert child.on_behalf_of == _PERSON_DID
+
+    def test_app_context_survives_a_json_round_trip(self) -> None:
+        with causal.bind(causal.root("app", _APP_DID, on_behalf_of=_PERSON_DID)):
+            event = AuditEvent(actor_did=_APP_DID, action="x", target="y", outcome="ok")
+        restored = AuditEvent.model_validate(event.model_dump(mode="json"))
+        assert restored.causal == event.causal
+
+
 class TestDetachedWork:
     async def test_spawn_detached_never_inherits_the_request(self) -> None:
         """Background work started inside a request is its own root.

@@ -82,6 +82,16 @@ class MailSendRequest(BaseModel):
     classification: str = "UNCLASSIFIED"
     attachments: tuple[str, ...] = ()
     idempotency_key: str = Field(min_length=1)
+    #: The person the mail is sent for, and the app that sent it (SPEC-087
+    #: D-827). Both ride in the signed ``Message.meta``; the transport sender
+    #: stays the signing identity so verification and replies are unchanged.
+    on_behalf_of: str | None = Field(default=None, min_length=1)
+    via: str | None = Field(default=None, min_length=1)
+
+    def attribution(self) -> dict[str, str]:
+        """The signed-meta attribution keys; an unset value is absent, never null."""
+        pairs = (("on_behalf_of", self.on_behalf_of), ("via", self.via))
+        return {key: value for key, value in pairs if value is not None}
 
 
 class MailSendResult(BaseModel):
@@ -301,6 +311,7 @@ class AgentMailService:
             attachments=list(request.attachments),
             idempotency_key=request.idempotency_key,
             classification=request.classification,
+            meta=request.attribution(),
         )
         self._sign_envelope(envelope)
         projection = {
@@ -313,6 +324,8 @@ class AgentMailService:
             "subject": request.subject,
             "reply_to_event_id": request.reply_to_id,
             "trace": _trace(request.classification),
+            "on_behalf_of": request.on_behalf_of,
+            "via": request.via,
         }
         await self._store.record_event_with_outbox(
             **projection, envelope=envelope.model_dump(mode="json")

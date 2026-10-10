@@ -41,7 +41,7 @@ async def test_hub_replays_unacknowledged_events_after_restart() -> None:
     await ApprovalNotificationHub(backend=backend)(make("restart"))
     restarted = ApprovalNotificationHub(backend=backend)
     assert [event["event_id"] for event in await restarted.list_recent()] == ["restart"]
-    assert await restarted.acknowledge("restart")
+    assert await restarted.acknowledge("restart", actor_did="did:arc:test:person")
     assert await restarted.list_recent() == []
 
 

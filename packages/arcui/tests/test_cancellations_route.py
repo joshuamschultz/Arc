@@ -18,7 +18,9 @@ from starlette.testclient import TestClient
 from arcui.audit import UIAuditLogger
 from arcui.auth import AuthConfig, AuthMiddleware
 
-_OPERATOR_DID = "did:arc:ui:operator"
+# SPEC-087 REQ-569: the static operator token is recorded as its session
+# pseudo-DID (a bare app has no session tracker, so the id is "untracked").
+_STATIC_TOKEN_ACTOR = "did:arc:ui:session:untracked"
 
 
 async def _open_store(_tmp_path: Path) -> CancelStore:
@@ -78,7 +80,7 @@ def test_operator_parks_attributable_request(tmp_path: Path) -> None:
     assert row["run_id"] == "run-abc"
     assert row["reason"] == "too long"
     assert row["status"] == "pending"
-    assert row["requested_by"] == _OPERATOR_DID
+    assert row["requested_by"] == _STATIC_TOKEN_ACTOR
 
     pending = _pending(tmp_path)
     assert len(pending) == 1 and pending[0].run_id == "run-abc"

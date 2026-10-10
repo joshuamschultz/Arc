@@ -36,6 +36,11 @@ describe('initiatorOf', () => {
     expect(initiatorOf(e)).toEqual({ kind: 'UI session', id: 'did:arc:ui:session:x' })
   })
 
+  it('names an app principal initiator (SPEC-087)', () => {
+    const e: AuditEvent = { causal: { initiator: 'app', initiator_id: 'did:arc:t:app/billing' } }
+    expect(initiatorOf(e)).toEqual({ kind: 'App', id: 'did:arc:t:app/billing' })
+  })
+
   it('is undefined for a row that predates causality', () => {
     expect(initiatorOf({ actor_did: 'did:arc:old' })).toBeUndefined()
   })

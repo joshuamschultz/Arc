@@ -110,8 +110,12 @@ class ApprovalNotificationHub:
                 )
         return events[-256:]
 
-    async def acknowledge(self, event_id: str) -> bool:
-        """Acknowledge one event after the browser has shown it."""
+    async def acknowledge(self, event_id: str, *, actor_did: str) -> bool:
+        """Acknowledge one event after the browser has shown it.
+
+        ``actor_did`` is who acknowledged it (the acting person, or the static
+        token's session pseudo-DID); the durable ack records it.
+        """
 
         if not event_id or len(event_id) > 512:
             return False
@@ -130,7 +134,7 @@ class ApprovalNotificationHub:
                 self._key(event_id),
                 {"state": "acked"},
                 {"sink_id": self._SINK_ID, "state": "unacked"},
-                actor_did="did:arc:ui:operator",
+                actor_did=actor_did,
             )
         )
 

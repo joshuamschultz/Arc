@@ -66,6 +66,9 @@ function stubFetch(agents: unknown[] = [{ agent_id: 'olivia', name: 'olivia', di
       if (path.includes('/api/maintenance/team/members')) {
         return json({ members: [] })
       }
+      if (path.includes('/api/principals')) {
+        return json({ principals: [] })
+      }
       if (path.includes('/api/classifiers/')) {
         return json({ classifier: 'jev', models: ['jev-1.13.0'] })
       }
@@ -177,5 +180,30 @@ describe('SettingsPage — Maintenance tab', () => {
     renderSettings('/settings?tab=maintenance')
 
     expect(await screen.findByText(/looking at this page read-only/i)).toBeTruthy()
+  })
+})
+
+// SPEC-087 T-1288 (COMP-013): Apps sits beside People (Users) in Settings.
+describe('SettingsPage — Apps tab', () => {
+  it('sits directly beside People, in every scope', async () => {
+    stubFetch()
+    renderSettings()
+
+    expect(await screen.findByRole('tab', { name: 'Apps' })).toBeTruthy()
+    const names = screen.getAllByRole('tab').map((t) => t.textContent)
+    expect(Math.abs(names.indexOf('Apps') - names.indexOf('People'))).toBe(1)
+
+    await userEvent.click(screen.getByRole('combobox'))
+    await userEvent.click(await screen.findByRole('option', { name: /system/i }))
+    expect(screen.getByRole('tab', { name: 'Apps' })).toBeTruthy()
+  })
+
+  it('opens the Apps panel when the link says ?tab=apps', async () => {
+    stubFetch()
+    renderSettings('/settings?tab=apps')
+
+    const tab = await screen.findByRole('tab', { name: 'Apps' })
+    expect(tab.getAttribute('aria-selected')).toBe('true')
+    expect(await screen.findByRole('heading', { name: 'Apps' })).toBeTruthy()
   })
 })

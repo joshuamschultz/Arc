@@ -201,3 +201,17 @@ async def test_an_unknown_decision_is_refused_before_any_write(stores: Any, regi
         task_id(run_id, "review", 0)
     ]
     assert gate.status == "review"
+
+
+async def test_runner_exposes_its_audit_sink_for_composed_planes(
+    stores: Any, registry: Any
+) -> None:
+    """A control plane composed onto this runner writes to the SAME sink (SPEC-087).
+
+    The dashboard composes its control plane from the runner; with no sink to
+    hand on it got a NullSink and every workflow.gate.* decision record was lost.
+    """
+    sink = RecordingSink()
+    runner, _ = build(stores, registry, sink)
+
+    assert runner.audit_sink is sink

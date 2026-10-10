@@ -300,7 +300,7 @@ def test_writer_holds_recovery_lock_through_local_replace(store, authority, tmp_
     b_done = threading.Event()
     b_attempted = threading.Event()
     errors: list[Exception] = []
-    original_write = a._write
+    original_write = a._state._write
 
     def delayed_write(payload: bytes) -> None:
         entered.set()
@@ -308,7 +308,7 @@ def test_writer_holds_recovery_lock_through_local_replace(store, authority, tmp_
             raise TimeoutError("writer release timed out")
         original_write(payload)
 
-    a._write = delayed_write
+    a._state._write = delayed_write
 
     def writer_a() -> None:
         try:
@@ -349,7 +349,7 @@ def test_replaced_lock_cannot_let_delayed_writer_rollback_two_newer_heads(
     entered = threading.Event()
     release = threading.Event()
     errors: list[Exception] = []
-    original_write = delayed._write
+    original_write = delayed._state._write
 
     def late_write(payload: bytes) -> None:
         entered.set()
@@ -357,7 +357,7 @@ def test_replaced_lock_cannot_let_delayed_writer_rollback_two_newer_heads(
             raise TimeoutError("writer release timed out")
         original_write(payload)
 
-    delayed._write = late_write
+    delayed._state._write = late_write
 
     def writer() -> None:
         try:
@@ -439,7 +439,7 @@ def test_shared_store_keeps_pinned_descriptors_private_to_active_call(store, tmp
     release = threading.Event()
     reader_done = threading.Event()
     errors: list[Exception] = []
-    original_write = store._write
+    original_write = store._state._write
 
     def delayed_write(payload: bytes) -> None:
         if threading.current_thread().name == "writer":
@@ -448,7 +448,7 @@ def test_shared_store_keeps_pinned_descriptors_private_to_active_call(store, tmp
                 raise TimeoutError("writer release timed out")
         original_write(payload)
 
-    store._write = delayed_write
+    store._state._write = delayed_write
 
     def writer() -> None:
         try:
@@ -467,11 +467,11 @@ def test_shared_store_keeps_pinned_descriptors_private_to_active_call(store, tmp
     second = threading.Thread(target=reader, name="reader")
     first.start()
     assert entered.wait(5)
-    pinned_dir, pinned_lock = store._dir_fd, store._lock_fd
+    pinned_dir, pinned_lock = store._state._dir_fd, store._state._lock_fd
     (tmp_path / ".users.lock").unlink()
     second.start()
     assert not reader_done.wait(0.05)
-    assert (store._dir_fd, store._lock_fd) == (pinned_dir, pinned_lock)
+    assert (store._state._dir_fd, store._state._lock_fd) == (pinned_dir, pinned_lock)
     release.set()
     first.join(5)
     second.join(5)

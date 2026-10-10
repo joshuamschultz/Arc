@@ -33,6 +33,7 @@ const INITIATOR_LABELS: Record<string, string> = {
   scheduler: 'Scheduler',
   workflow: 'Workflow',
   ui_session: 'UI session',
+  app: 'App',
   connector_probe: 'Connector probe',
   system: 'System',
 }

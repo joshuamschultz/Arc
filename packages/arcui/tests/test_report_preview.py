@@ -29,7 +29,11 @@ def _client(tmp_path: Path, *, is_operator: bool = True) -> tuple[TestClient, Pa
         SimpleNamespace(agent_id="ada", did="did:arc:agent:ada", workspace_path=root)
     ]
     user = SimpleNamespace(
-        email="ada@example.test", did="did:arc:user:ada", disabled=False, is_operator=is_operator
+        email="ada@example.test",
+        did="did:arc:user:ada",
+        disabled=False,
+        is_operator=is_operator,
+        roles=("operator",) if is_operator else ("viewer",),
     )
     app.state.user_store_factory = lambda: SimpleNamespace(
         get=lambda email: user if email == user.email else None
