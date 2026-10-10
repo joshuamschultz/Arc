@@ -183,3 +183,16 @@ async def test_rows_project_the_signer_and_causal_chain(tmp_path: Path) -> None:
     assert row["causal"]["initiator_id"] == agent
     assert row["is_denial"] is True
     assert row["is_control"] is False
+
+
+async def test_an_app_caused_row_on_an_agent_chain_is_a_control_action(tmp_path: Path) -> None:
+    """SPEC-087: an app principal (alone or for a person) is an operator surface;
+    what it causes on an agent's chain counts as a control action."""
+    world = _World(tmp_path)
+    with causal.bind(causal.root("app", "did:arc:t:app/1", on_behalf_of="did:arc:t:user/2")):
+        world.write(1)
+    await world.ingest().scan_once()
+    (row,) = await world.rows()
+    assert row["chain"] == "audit-chain-olivia"
+    assert row["initiator"] == "app"
+    assert row["is_control"] is True

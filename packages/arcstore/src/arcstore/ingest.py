@@ -56,7 +56,7 @@ UI_WORM_FILENAME = "audit-chain-arcui.jsonl"
 _CONTROL_CHAINS = frozenset({Path(WORM_ACTIVE_FILENAME).stem, Path(UI_WORM_FILENAME).stem})
 """Chains written by operator surfaces (the ``arc`` CLI and arcui)."""
 
-_CONTROL_INITIATORS = frozenset({"operator", "ui_session"})
+_CONTROL_INITIATORS = frozenset({"operator", "ui_session", "app"})
 _DENIAL_OUTCOMES = frozenset({"deny", "denied", "blocked"})
 _CAUSAL_COLUMNS = (
     "initiator",
