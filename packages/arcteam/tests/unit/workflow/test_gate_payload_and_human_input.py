@@ -417,28 +417,3 @@ async def test_a_row_naming_an_undeclared_escalation_target_grants_nothing(
             roles=frozenset(),
         )
     assert (await h.row(run_id, "approve")).status == "review"
-
-
-async def test_payload_schema_comes_from_the_signed_node_not_the_row(
-    backend: Any, tmp_path: Path
-) -> None:
-    """A row is a mutable record; the payload schema is authority (as approvers are).
-
-    Stripping the stamped schema off the row must not open the gate to any payload.
-    """
-    h = harness(backend, tmp_path, approval_flow())
-    run_id = await h.reach("approve")
-    gate = await h.row(run_id, "approve")
-    stripped = {
-        k: v
-        for k, v in gate.metadata.items()
-        if k not in ("output_schema", "output_schema_resolved")
-    }
-    await h.tasks.update(gate.id, {"metadata": stripped}, actor_did=MALLORY)
-    assert "output_schema_resolved" not in (await h.row(run_id, "approve")).metadata
-
-    result = await decide(h, run_id, "approve", "approve", payload={"qty": "three"})
-
-    assert not result.ok
-    assert "invalid_payload" in issue_codes(result)
-    assert (await h.row(run_id, "approve")).status == "review"

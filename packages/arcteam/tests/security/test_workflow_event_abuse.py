@@ -25,6 +25,7 @@ escalation to an unauthorized target"; REQ-606, 607, 609, 614, 621, 622):
 * ``escalate_to`` naming an agent DID, or a role only agents hold, is refused at
   validation and again at run start;
 * a forged ``escalated_to`` (or a forged row ``escalate_to``) grants nothing;
+* a row stripped of its stamped payload schema still refuses an off-schema payload;
 * a timeout racing a decision leaves exactly one decision.
 
 Route-level forgery (an event fired without ``workflows:event``) lives in
@@ -784,6 +785,34 @@ def _single_decision(row: Any, human: Any, decider: str) -> None:
     else:
         assert human.ok
         assert envelope.get("decided_by") == decider
+
+
+class TestForgedPayloadSchema:
+    async def test_stripping_the_row_schema_does_not_open_the_gate_to_any_payload(
+        self, backend: FakeBackend, tmp_path: Path
+    ) -> None:
+        """The payload schema is authority, read from the signed node as approvers are."""
+        h = ClockHarness(backend, approval_flow(), tmp_path, Clock())
+        run_id = await h.reach("approve")
+        gate = await h.row(run_id, "approve")
+        forged = {
+            k: v
+            for k, v in gate.metadata.items()
+            if k not in ("output_schema", "output_schema_resolved")
+        }
+        await h.tasks.update(gate.id, {"metadata": forged}, actor_did=MALLORY)
+
+        result = await h.plane.resolve_gate(
+            gate.id,
+            decision="approve",
+            payload={"qty": "three"},
+            decider_did=CLOCK_ALICE,
+            actor_roles=PLANNER,
+        )
+
+        assert not result.ok, "a row stripped of its schema took an off-schema payload"
+        assert {issue.code for issue in result.errors} == {"invalid_payload"}
+        assert (await h.row(run_id, "approve")).status == "review"
 
 
 class TestTimeoutRace:
