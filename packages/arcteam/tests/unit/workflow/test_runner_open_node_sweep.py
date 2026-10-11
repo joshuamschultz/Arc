@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from arcteam.workflow.runner_contracts import TriggerContext
 from arcteam.workflow.runner_state import derive_node_states
 
 from .conftest import (
@@ -38,7 +39,13 @@ _OPERATOR = "did:arc:x/1"
 
 async def _start(stores: Any, registry: Any, **kwargs: Any) -> tuple[Any, Any]:
     runner = build(stores, registry, CHAIN, **kwargs)
-    run = await runner.start_run("swept", input={}, initiator="operator", initiator_did=_OPERATOR)
+    run = await runner.start_run(
+        "swept",
+        input={},
+        initiator="operator",
+        initiator_did=_OPERATOR,
+        trigger=TriggerContext("manual"),
+    )
     return runner, run
 
 

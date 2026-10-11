@@ -42,6 +42,8 @@ from arcteam.workflow.models import (
     MAX_DEFINITION_BYTES,
     MAX_NODES,
     AgentNode,
+    GateNode,
+    HumanInputNode,
     RouterNode,
     ScriptNode,
     ToolNode,
@@ -54,7 +56,11 @@ from arcteam.workflow.resolver import (
     malformed_reference_strings,
     references_in,
 )
-from arcteam.workflow.runner_contracts import GateNodeSpec, WorkflowSpec
+from arcteam.workflow.runner_contracts import HUMAN_STEP_KINDS, HumanStepSpec, WorkflowSpec
+from arcteam.workflow.schema_check import SchemaRefusedError, check, load_schema
+
+RESERVED_INPUT_PROPERTY = "arc_trigger"
+"""The run-input key the runner writes itself; no input or event schema may claim it."""
 
 
 class KnownReferences(BaseModel):
@@ -65,7 +71,10 @@ class KnownReferences(BaseModel):
     name every registered agent long before anything can enumerate every tool
     in the fleet — and rejecting every tool node because nobody could list the
     tools would make the check unusable exactly where it is most wanted.
-    ``known=None`` skips all three.
+    ``known=None`` skips all of them.
+
+    ``users`` is the DIDs whose registry entity type is ``user``: an
+    ``escalate_to`` DID must be one of them, never an agent or a stranger.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -74,6 +83,7 @@ class KnownReferences(BaseModel):
     tools: frozenset[str] = frozenset()
     skills: frozenset[str] = frozenset()
     roles: frozenset[str] = frozenset()
+    users: frozenset[str] = frozenset()
 
 
 def validate_definition(
@@ -112,6 +122,7 @@ def validate_definition(
     issues += _check_node_options(definition)
     issues += _check_known(definition, known)
     issues += _check_files(definition, bundle_root, pending_files)
+    issues += _check_schema_contents(definition, bundle_root)
     if structural:
         return tuple(issues)
 
@@ -256,6 +267,14 @@ def _check_node_options(definition: WorkflowDefinition) -> Iterable[ValidationIs
                 observed=node.on_failure,
                 admissible=("fail_run", "skip_dependents"),
             )
+        if isinstance(node, HumanInputNode) and node.output_schema is None:
+            yield ValidationIssue(
+                node_id=node.id,
+                field="output_schema",
+                error="a human_input node must declare the schema its answer is checked against",
+                observed=None,
+                admissible=('output_schema = "<path to a JSON Schema in the bundle>"',),
+            )
         yield from _check_artifact_paths(node)
 
 
@@ -332,35 +351,69 @@ def _check_known(
         if known.skills and isinstance(node, AgentNode) and node.skill is not None:
             if node.skill not in known.skills:
                 yield _unknown(node.id, "skill", node.skill, known.skills)
+        if known.users and isinstance(node, GateNode | HumanInputNode):
+            yield from _check_escalation_user(node, known.users)
     if known.roles:
         yield from check_gate_roles(definition, known.roles)
+
+
+def _check_escalation_user(
+    node: GateNode | HumanInputNode, users: frozenset[str]
+) -> Iterable[ValidationIssue]:
+    """An ``escalate_to`` DID must be a registered user, never an agent.
+
+    An escalation hands a human decision to whoever it names; naming an agent
+    would let a model approve its own run (ASI09).
+    """
+    target = node.escalate_to
+    if target is None or target.startswith(APPROVER_ROLE_PREFIX) or target in users:
+        return
+    yield ValidationIssue(
+        node_id=node.id,
+        field="escalate_to",
+        error="escalate_to must name a registered user — this DID is not one",
+        observed=target,
+        admissible=tuple(sorted(users)),
+    )
 
 
 def check_gate_roles(
     definition: WorkflowSpec, declared_roles: frozenset[str]
 ) -> tuple[ValidationIssue, ...]:
-    """Every ``role:<name>`` a gate admits must be a role the team declares.
+    """Every ``role:<name>`` a human step admits must be a role the team declares.
 
+    Covers a gate's and a human_input node's ``approvers`` and ``escalate_to``.
     Run start calls this with the live registry's roles and refuses the run on
     any issue — unlike the authoring roster check, an EMPTY roster is not
-    "skip" here: a gate naming a role nobody holds could never be approved, and
-    a role that appears later must not silently widen who decides.
+    "skip" here: a step naming a role nobody holds could never be decided (an
+    escalation to one would strand the run at its deadline), and a role that
+    appears later must not silently widen who decides.
     """
+    admissible = tuple(f"role:{r}" for r in sorted(declared_roles))
     issues: list[ValidationIssue] = []
     for node in definition.nodes:
-        if node.kind != "gate":
+        if node.kind not in HUMAN_STEP_KINDS:
             continue
-        for role in sorted(approver_roles(cast(GateNodeSpec, node).approvers) - declared_roles):
-            issues.append(
-                ValidationIssue(
-                    node_id=node.id,
-                    field="approvers",
-                    error="unknown role — no team member is registered with it",
-                    observed=f"role:{role}",
-                    admissible=tuple(f"role:{r}" for r in sorted(declared_roles)),
-                )
-            )
+        step = cast(HumanStepSpec, node)
+        for role in sorted(approver_roles(step.approvers) - declared_roles):
+            issues.append(_unknown_role(node.id, "approvers", f"role:{role}", admissible))
+        escalate_to = step.escalate_to
+        escalation = approver_roles((escalate_to,) if escalate_to else ())
+        for role in sorted(escalation - declared_roles):
+            issues.append(_unknown_role(node.id, "escalate_to", f"role:{role}", admissible))
     return tuple(issues)
+
+
+def _unknown_role(
+    node_id: str, field: str, observed: str, admissible: tuple[str, ...]
+) -> ValidationIssue:
+    return ValidationIssue(
+        node_id=node_id,
+        field=field,
+        error="unknown role — no team member is registered with it",
+        observed=observed,
+        admissible=admissible,
+    )
 
 
 def _unknown(node_id: str, field: str, observed: str, roster: frozenset[str]) -> ValidationIssue:
@@ -383,6 +436,8 @@ def _check_files(
         yield from _check_file(
             None, "input.schema", definition.input_spec.schema_ref, root, pending
         )
+    for event in definition.events:
+        yield from _check_file(None, _event_field(event.name), event.schema_ref, root, pending)
     for node in definition.nodes:
         if node.output_schema is not None:
             yield from _check_file(node.id, "output_schema", node.output_schema, root, pending)
@@ -416,6 +471,101 @@ def _check_file(
             error="the referenced file does not exist in the bundle",
             observed=reference,
             admissible=(f"a file present under {root.name}/",),
+        )
+
+
+def _event_field(name: str) -> str:
+    return f"event.{name}.schema"
+
+
+def _check_schema_contents(
+    definition: WorkflowDefinition, bundle_root: Path | None
+) -> Iterable[ValidationIssue]:
+    """Rules about what a schema says, not just where it is.
+
+    Only files already in the bundle are read. A missing or escaping file is
+    reported once, by :func:`_check_files`; a file still pending in the same
+    save has no bytes to read yet.
+    """
+    if bundle_root is None:
+        return
+    if definition.input_spec is not None:
+        yield from _check_reserved_property(
+            bundle_root, "input.schema", definition.input_spec.schema_ref
+        )
+    for event in definition.events:
+        yield from _check_reserved_property(
+            bundle_root, _event_field(event.name), event.schema_ref
+        )
+    for node in definition.nodes:
+        if isinstance(node, GateNode | HumanInputNode) and node.on_timeout == "continue":
+            yield from _check_continue_accepts_empty(bundle_root, node)
+
+
+def _present_schema(
+    bundle_root: Path, node_id: str | None, field: str, reference: str
+) -> tuple[dict[str, Any] | None, ValidationIssue | None]:
+    """Load a schema already in the bundle: ``(schema, None)``, ``(None, issue)``,
+    or ``(None, None)`` when the file is absent (reported elsewhere)."""
+    resolved = confine(bundle_root.resolve(), reference)
+    if resolved is None or not resolved.is_file():
+        return None, None
+    try:
+        return load_schema(bundle_root, reference), None
+    except SchemaRefusedError as exc:
+        return None, ValidationIssue(
+            node_id=node_id,
+            field=field,
+            error=str(exc),
+            observed=reference,
+            admissible=("a Draft 2020-12 JSON Schema object of at most 64 KiB in the bundle",),
+        )
+
+
+def _check_reserved_property(
+    bundle_root: Path, field: str, reference: str
+) -> Iterable[ValidationIssue]:
+    """No run-input schema may declare the key the runner records the trigger under."""
+    schema, refused = _present_schema(bundle_root, None, field, reference)
+    if refused is not None:
+        yield refused
+    if schema is None:
+        return
+    properties = schema.get("properties")
+    if isinstance(properties, Mapping) and RESERVED_INPUT_PROPERTY in properties:
+        yield ValidationIssue(
+            field=field,
+            error=(
+                f"the schema declares {RESERVED_INPUT_PROPERTY!r}, which the runner reserves "
+                "to record what started the run"
+            ),
+            observed=reference,
+            admissible=(f"a schema without a {RESERVED_INPUT_PROPERTY!r} property",),
+        )
+
+
+def _check_continue_accepts_empty(
+    bundle_root: Path, node: GateNode | HumanInputNode
+) -> Iterable[ValidationIssue]:
+    """``on_timeout = "continue"`` resolves with an empty payload, so ``{}`` must validate."""
+    if node.output_schema is None:
+        return
+    schema, refused = _present_schema(bundle_root, node.id, "output_schema", node.output_schema)
+    if refused is not None:
+        yield refused
+    if schema is None:
+        return
+    failures = check({}, schema)
+    if failures:
+        yield ValidationIssue(
+            node_id=node.id,
+            field="on_timeout",
+            error=(
+                "on_timeout = 'continue' resolves with an empty payload, but {} does not "
+                f"validate against the output_schema: {failures[0].error}"
+            ),
+            observed=node.on_timeout,
+            admissible=("fail", "escalate", "an output_schema that accepts {}"),
         )
 
 
@@ -746,6 +896,7 @@ def _check_arg_strings(node: ToolNode) -> Iterable[ValidationIssue]:
 
 
 __all__ = [
+    "RESERVED_INPUT_PROPERTY",
     "KnownReferences",
     "approver_roles",
     "check_gate_roles",

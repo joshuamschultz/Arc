@@ -58,6 +58,15 @@ class RunStateMissingError(RuntimeError):
     """The runner's companion state row for a run is gone."""
 
 
+class RunIdentityConflictError(ValueError):
+    """A pinned run id already names a run created from a different request.
+
+    The idempotency refusal (D-842): an identical repeat returns the existing
+    run; anything else under the same id (another payload, signer or version)
+    is this error, never a silent overwrite.
+    """
+
+
 _STATE_COLLECTION = "workflow_run_state"
 _TASK_COLLECTION = "tasks"
 _CAS_RETRIES = 32
@@ -150,18 +159,19 @@ class WorkflowRunStore:
                 allow_nan=False,
             ).encode()
         ).hexdigest()
-        await self._runs.create(
-            Run(
-                id=run_id,
-                workflow_id=workflow_id,
-                workflow_version=version,
-                content_hash=content_hash,
-                request_digest=request_digest,
-                status="running",
-                initiator_did=initiator_did,
-            ),
-            fence=fence,
+        run = Run(
+            id=run_id,
+            workflow_id=workflow_id,
+            workflow_version=version,
+            content_hash=content_hash,
+            request_digest=request_digest,
+            status="running",
+            initiator_did=initiator_did,
         )
+        try:
+            await self._runs.create(run, fence=fence)
+        except ValueError as exc:
+            raise RunIdentityConflictError(str(exc)) from exc
         creation_token = uuid4().hex
         state: dict[str, Any] = {
             "run_id": run_id,
@@ -188,7 +198,9 @@ class WorkflowRunStore:
             fence=fence,
         )
         if rows[0].get("request_digest") != request_digest:
-            raise ValueError("workflow companion identity already exists with a different request")
+            raise RunIdentityConflictError(
+                "workflow companion identity already exists with a different request"
+            )
         loaded = await self.get(run_id)
         if loaded is None:  # pragma: no cover — the row was just written
             raise RuntimeError(f"run {run_id} vanished immediately after creation")
@@ -793,6 +805,7 @@ def _same_path_entry(left: PathEntry, right: PathEntry) -> bool:
 __all__ = [
     "FlowRun",
     "RegistryOwnerResolver",
+    "RunIdentityConflictError",
     "RunStateMissingError",
     "WorkflowRunStore",
     "WorkflowTaskStore",

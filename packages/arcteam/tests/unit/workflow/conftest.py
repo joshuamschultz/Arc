@@ -166,6 +166,8 @@ class Node:
     # gate
     gate: str | None = None
     approvers: tuple[str, ...] = ()
+    on_timeout: str = "fail"
+    escalate_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +185,9 @@ class Definition:
     channel: str | None = None
     budget: Budget | None = None
     nodes: tuple[Node, ...] = ()
+    # SPEC-088: the runner reads the governing schema off these (none declared).
+    input_spec: Any = None
+    events: tuple[Any, ...] = ()
 
     @property
     def node_ids(self) -> tuple[str, ...]:

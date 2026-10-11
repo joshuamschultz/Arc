@@ -32,6 +32,7 @@ from arcteam.workflow import explain_node_error, run_failure_reason
 from arcteam.workflow.errors import GateNotAuthorizedError, WorkflowError
 from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
+from arcteam.workflow.runner_contracts import TriggerContext
 from arctrust import sanitize_error_text
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
@@ -532,7 +533,11 @@ class DashboardWorkflowPlane:
         self, workflow_id: str, run_input: dict[str, Any], *, actor: OperatorActor
     ) -> ControlPlaneResult:
         result = await self._plane.run(
-            workflow_id, input=run_input, initiator="operator", actor_did=actor.did
+            workflow_id,
+            input=run_input,
+            initiator="operator",
+            actor_did=actor.did,
+            trigger=TriggerContext("manual"),
         )
         if not result.ok or result.run is None:
             return _errors(result)
@@ -612,7 +617,8 @@ class DashboardWorkflowPlane:
                 task_id,
                 decision=decision,
                 notes=notes,
-                actor_did=actor.did,
+                decider_did=actor.did,
+                on_behalf_of=actor.on_behalf_of,
                 actor_roles=actor.roles,
             )
         except GateNotAuthorizedError:

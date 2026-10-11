@@ -21,6 +21,7 @@ from arcgateway.executor import InboundEvent
 from arcteam.workflow.control_plane import GATE_WORDS
 from arcteam.workflow.errors import GateNotAuthorizedError
 from arcteam.workflow.runner import node_task_id
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from arccli.commands import workflow as wf_cmd
 from arccli.commands.workflow import workflow_handler
@@ -87,6 +88,7 @@ def _start_run_with_waiting_gate(arc_dir: Path) -> str:
                 initiator="operator",
                 actor_did=wf_cmd._actor_did(arc_dir),
                 detached=True,
+                trigger=TriggerContext("manual"),
             )
             assert result.run is not None
             await plane.runner.tick()
@@ -122,7 +124,7 @@ class _PlaneResolver:
                         task_id,
                         decision=GATE_WORDS[decision],
                         notes=notes,
-                        actor_did=actor_did,
+                        decider_did=actor_did,
                         actor_roles=await plane.runner.member_roles(actor_did),
                     )
                 except GateNotAuthorizedError:
@@ -164,9 +166,9 @@ def test_gate_resolved_via_cli_and_gateway_card(
     workflow_handler(["gate", row.id, "approve", "--notes", "ship it", "--dir", str(arc_dir)])
 
     settled = _gate_row(arc_dir, first)
-    assert settled.metadata["gate_decision"] == "approved"
-    assert settled.metadata["gate_notes"] == "ship it"
-    assert settled.metadata["gate_actor_did"] == wf_cmd._actor_did(arc_dir)
+    assert settled.output["decision"] == "approved"
+    assert settled.output["notes"] == "ship it"
+    assert settled.output["decided_by"] == wf_cmd._actor_did(arc_dir)
     assert "approved" in capsys.readouterr().out.lower()
 
     # Chat card: a paired user the gate does not list is refused; the row waits.
@@ -187,9 +189,9 @@ def test_gate_resolved_via_cli_and_gateway_card(
     )
 
     rejected = _gate_row(arc_dir, second)
-    assert rejected.metadata["gate_decision"] == "rejected"
-    assert rejected.metadata["gate_notes"] == "too risky"
-    assert rejected.metadata["gate_actor_did"] == _PAIRED_USER
+    assert rejected.output["decision"] == "rejected"
+    assert rejected.output["notes"] == "too risky"
+    assert rejected.output["decided_by"] == _PAIRED_USER
     assert reply == "gate reject recorded"
 
 

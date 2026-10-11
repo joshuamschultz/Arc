@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from arcteam.workflow.control_plane import WorkflowControlPlane
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     OPS_DID,
@@ -51,7 +52,13 @@ def _plane(stores: Any, registry: Any) -> tuple[WorkflowControlPlane, Any]:
 
 async def _failed_run(control: WorkflowControlPlane, stores: Any) -> str:
     _, _, tasks = stores
-    started = await control.run("dag3", input={}, initiator="operator", actor_did=OPERATOR)
+    started = await control.run(
+        "dag3",
+        input={},
+        initiator="operator",
+        actor_did=OPERATOR,
+        trigger=TriggerContext("manual"),
+    )
     run_id = started.run.run_id
     await complete_node(tasks, task_id(run_id, "a"), SALES_DID, {"v": 1})
     await control.runner.advance(run_id)
@@ -91,7 +98,13 @@ async def test_retry_failed_node_skips_completed_upstream(stores: Any, registry:
 
 async def test_retry_refused_on_running_run(stores: Any, registry: Any) -> None:
     control, sink = _plane(stores, registry)
-    started = await control.run("dag3", input={}, initiator="operator", actor_did=OPERATOR)
+    started = await control.run(
+        "dag3",
+        input={},
+        initiator="operator",
+        actor_did=OPERATOR,
+        trigger=TriggerContext("manual"),
+    )
 
     result = await control.retry_node(started.run.run_id, "a", actor_did=OPERATOR)
 

@@ -12,6 +12,8 @@ from typing import Any
 import pytest
 from arcstore.tasks import Task
 
+from arcteam.workflow.runner_contracts import TriggerContext
+
 from .conftest import OPS_DID, SALES_DID, Definition, Node, complete_node, task_id
 from .test_runner_frontier import build
 
@@ -63,6 +65,7 @@ async def test_restart_mid_materialization_re_derives_instead_of_duplicating(
             initiator="operator",
             initiator_did="did:arc:x/1",
             run_id="run-resume",
+            trigger=TriggerContext("manual"),
         )
 
     flow_tasks.create_batch = original  # type: ignore[method-assign]
@@ -90,7 +93,11 @@ async def test_materialization_is_idempotent_across_repeated_ticks(
     flow_tasks, _, _ = stores
     runner = build(stores, registry, FANOUT)
     run = await runner.start_run(
-        "fanout", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "fanout",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     before = list(flow_tasks.created_keys)
@@ -112,7 +119,11 @@ async def test_the_path_taken_records_each_node_instance_exactly_once(
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     for _ in range(3):
@@ -136,7 +147,11 @@ async def test_completed_node_is_replayed_never_re_executed(stores: Any, registr
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     first_id = task_id(run.run_id, "first", 0)
@@ -162,7 +177,11 @@ async def test_cancel_marks_the_run_before_fanning_out_node_cancels(
     flow_tasks, runs, _ = stores
     runner = build(stores, registry, FANOUT)
     run = await runner.start_run(
-        "fanout", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "fanout",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def observe() -> str | None:
@@ -186,7 +205,11 @@ async def test_a_node_completing_during_the_sweep_cannot_extend_the_frontier(
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await runner.cancel(run.run_id, actor_did="did:arc:local:user/9", reason="operator stop")
@@ -204,7 +227,11 @@ async def test_cancel_of_a_terminal_run_is_refused(stores: Any, registry: Any) -
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(
         tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
@@ -228,7 +255,11 @@ async def test_a_terminating_tick_loses_a_race_with_a_cancel(stores: Any, regist
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(
         tasks, task_id(run.run_id, "first", 0), SALES_DID, {"company_domain": "acme.example"}
@@ -280,7 +311,11 @@ async def test_one_failing_node_cancel_does_not_abort_the_sweep(
     flow_tasks, _, _ = stores
     runner = build(stores, registry, FANOUT)
     run = await runner.start_run(
-        "fanout", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "fanout",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     original = flow_tasks.request_cancel
     seen: list[str] = []

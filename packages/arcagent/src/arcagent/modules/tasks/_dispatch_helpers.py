@@ -8,10 +8,13 @@ from datetime import datetime
 from typing import Any
 
 from arcagent.fleet import FleetMember
-from arcagent.modules.tasks.models import Task
+from arcagent.modules.tasks.models import Priority, Task
 from arcagent.utils.sanitizer import sanitize_text
 
 _TASK_SESSION = "task"
+
+# Highest-priority-first ordering (mirrors arcstore's claim order, SDD §2).
+_PRIORITY_RANK: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 _SAFE_SESSION_KEY = re.compile(r"^[A-Za-z0-9._:-]+$")
 
 
@@ -56,6 +59,20 @@ def is_stale(task: Task, now: datetime, threshold: float) -> bool:
     return (now - started).total_seconds() >= threshold
 
 
+def ready_order_key(task: Task) -> tuple[int, int, float, str]:
+    """Dispatch order for ready tasks: priority, then earliest ``due_at``, then age.
+
+    ``due_at`` is compared as an instant (offsets differ, so string order would
+    lie) and an undated task sorts after every dated one (SPEC-088 REQ-603).
+    The model validator guarantees a stored ``due_at`` is timezone-aware.
+    """
+    priority = _PRIORITY_RANK.get(task.priority, 99)
+    if task.due_at is None:
+        return (priority, 1, 0.0, task.created_at or "")
+    due = datetime.fromisoformat(task.due_at).timestamp()
+    return (priority, 0, due, task.created_at or "")
+
+
 def pick_agent(task: Task, agents: list[FleetMember], load: dict[str, int]) -> FleetMember:
     def rank(agent: FleetMember) -> tuple[int, int, str]:
         matches = bool(set(task.tags) & set(agent.capabilities))
@@ -69,6 +86,7 @@ __all__ = [
     "format_task_prompt",
     "is_stale",
     "pick_agent",
+    "ready_order_key",
     "resolve_timeout",
     "session_key",
 ]

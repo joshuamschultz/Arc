@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from arcteam.workflow.runner import NodeDecisionError
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import Definition, Node, RecordingNotifier, RecordingSink
 from .test_runner_frontier import build
@@ -36,7 +37,11 @@ async def test_nats_timeout_does_not_terminate_run_and_mails_after_threshold(
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink, operator_notifier=notifier)
     started = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def infra_down(_: str) -> Any:
@@ -64,7 +69,11 @@ async def test_definition_error_still_terminates_with_reason(stores: Any, regist
     _, runs, _ = stores
     runner = build(stores, registry, WIRED)
     started = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def broken_definition(_: str) -> Any:
@@ -100,7 +109,11 @@ async def test_lease_loss_backs_off_without_failing_runs(stores: Any, registry: 
     sink = RecordingSink()
     owner = build(stores, registry, WIRED)
     started = await owner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     lease = _FlakyLease()
     sleeps: list[float] = []

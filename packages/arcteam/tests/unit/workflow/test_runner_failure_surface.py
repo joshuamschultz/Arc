@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from arcteam.workflow.runner_contracts import TriggerContext
+
 from .conftest import (
     OPS_DID,
     RUNNER_DID,
@@ -35,7 +37,11 @@ async def _fail_collect(stores: Any, registry: Any, **kwargs: Any) -> tuple[Any,
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN, **kwargs)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     await fail_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, OVERFLOW)
     record = await runner.advance(run.run_id)
@@ -103,7 +109,11 @@ async def test_successful_run_sends_no_operator_notice(stores: Any, registry: An
     notifier = RecordingNotifier()
     runner = build(stores, registry, CHAIN, operator_notifier=notifier)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     for node, did in (("collect", SALES_DID), ("mid", OPS_DID), ("deliver", SALES_DID)):
         await complete_node(tasks, task_id(run.run_id, node, 0), did, {"ok": True})
@@ -117,7 +127,11 @@ async def test_node_receives_transitive_ancestor_output(stores: Any, registry: A
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"files": ["a"]})
     await runner.advance(run.run_id)
@@ -136,7 +150,11 @@ async def test_large_ancestor_output_travels_as_an_artifact_ref(
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     huge = {"blob": "x" * 200_000}
     await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, huge)

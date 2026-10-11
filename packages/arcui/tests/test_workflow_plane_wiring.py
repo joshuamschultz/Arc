@@ -281,7 +281,7 @@ async def test_the_dashboard_decides_a_gate_with_the_actors_own_roles() -> None:
 
         assert result.errors is None
         kwargs = team.resolve_gate.await_args.kwargs
-        assert (kwargs["actor_did"], kwargs["actor_roles"]) == ("did:arc:user/1", roles)
+        assert (kwargs["decider_did"], kwargs["actor_roles"]) == ("did:arc:user/1", roles)
 
 
 async def test_a_gate_denial_is_reported_forbidden_not_raised() -> None:

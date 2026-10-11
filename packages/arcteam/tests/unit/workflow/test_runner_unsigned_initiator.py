@@ -14,6 +14,7 @@ import pytest
 
 from arcteam.workflow.errors import UnsignedWorkflowError
 from arcteam.workflow.runner import UnsignedWorkflowRefusedError
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import Bundle, RecordingSink
 from .test_runner_frontier import FakeDefinitions, build, onboarding
@@ -46,7 +47,11 @@ async def test_agent_and_scheduler_never_start_an_unsigned_workflow(
 
     with pytest.raises(UnsignedWorkflowRefusedError):
         await runner.start_run(
-            "customer-onboarding", input={}, initiator=initiator, initiator_did=ACTOR
+            "customer-onboarding",
+            input={},
+            initiator=initiator,
+            initiator_did=ACTOR,
+            trigger=TriggerContext("manual"),
         )
 
     denied = [e for e in sink.events if e.outcome == "denied"]
@@ -64,7 +69,11 @@ async def test_operator_draft_run_is_refused_above_personal(
 
     with pytest.raises(UnsignedWorkflowRefusedError):
         await runner.start_run(
-            "customer-onboarding", input={}, initiator="operator", initiator_did=ACTOR
+            "customer-onboarding",
+            input={},
+            initiator="operator",
+            initiator_did=ACTOR,
+            trigger=TriggerContext("manual"),
         )
 
     assert [e.outcome for e in sink.events if e.action == "workflow.run.started"] == ["denied"]
@@ -77,7 +86,11 @@ async def test_operator_draft_run_at_personal_is_allowed_and_audited_with_warnin
     runner = _runner(stores, registry, "personal", sink)
 
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did=ACTOR
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did=ACTOR,
+        trigger=TriggerContext("manual"),
     )
 
     assert run.status == "running"
@@ -108,7 +121,11 @@ async def test_store_level_unsigned_refusal_is_audited_as_denied(
 
     with pytest.raises(UnsignedWorkflowRefusedError):
         await runner.start_run(
-            "customer-onboarding", input={}, initiator="agent", initiator_did=ACTOR
+            "customer-onboarding",
+            input={},
+            initiator="agent",
+            initiator_did=ACTOR,
+            trigger=TriggerContext("manual"),
         )
 
     assert [e.outcome for e in sink.events if e.action == "workflow.run.started"] == ["denied"]
@@ -118,6 +135,10 @@ async def test_a_signed_workflow_runs_for_every_initiator(stores: Any, registry:
     for initiator in ("operator", "agent", "scheduler", "chat"):
         runner = build(stores, registry, onboarding(), tier="federal")
         run = await runner.start_run(
-            "customer-onboarding", input={}, initiator=initiator, initiator_did=ACTOR
+            "customer-onboarding",
+            input={},
+            initiator=initiator,
+            initiator_did=ACTOR,
+            trigger=TriggerContext("manual"),
         )
         assert run.status == "running"

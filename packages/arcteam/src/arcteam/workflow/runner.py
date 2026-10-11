@@ -38,7 +38,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
-from urllib.parse import quote
 from uuid import uuid4
 
 import arcstore
@@ -47,17 +46,22 @@ from arcstore.tasks import PROCESS_INSTANCE_ID, Task
 from arcstore.workflow_lease import RunnerFence, WorkflowRunnerLease
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
-from .errors import UnsignedWorkflowError
-from .narrator import RunNarrator, assert_channel_binding, gate_card_text
+from .errors import UnsignedWorkflowError, ValidationIssue
+from .gate_deadlines import GateDeadlines
+from .gate_outcome import human_step_metadata, recorded_decision, recorded_notes
+from .narrator import RunNarrator, assert_channel_binding, gate_card_text, run_page_path
 from .ownership import assert_owner_is_real
+from .run_events import RunEvents, WorkEventSink
+from .run_input import admission_issues, stamped_input
 from .runner_budget import RunBudget
 from .runner_contracts import (
+    HUMAN_STEP_KINDS,
     RETRYABLE_RUN_STATUSES,
     TERMINAL_RUN_STATUSES,
     ArgsResolver,
     BundleSpec,
     DefinitionStoreLike,
-    GateNodeSpec,
+    HumanStepSpec,
     Initiator,
     NodeSpec,
     OnFailure,
@@ -71,10 +75,12 @@ from .runner_contracts import (
     RunStoreLike,
     Tier,
     ToolNodeSpec,
+    TriggerSpec,
     WorkflowSpec,
     WorkflowTaskStoreLike,
 )
 from .runner_state import NodeInstance, RunState, derive_node_states
+from .schema_check import SchemaRefusedError
 from .stores import RunStateMissingError
 from .validator import approver_roles, check_gate_roles
 
@@ -106,6 +112,15 @@ class WorkflowRunNotFoundError(WorkflowRunError):
 
 class UnsignedWorkflowRefusedError(WorkflowRunError):
     """An unsigned definition was asked to run by an initiator or tier that may not."""
+
+
+class WorkflowInputRefusedError(WorkflowRunError):
+    """The run input (or its trigger) failed admission; ``issues`` names each field."""
+
+    def __init__(self, workflow_id: str, issues: tuple[ValidationIssue, ...]) -> None:
+        detail = "; ".join(f"{issue.field}: {issue.error}" for issue in issues)
+        super().__init__(f"workflow {workflow_id!r} refused the run input: {detail}")
+        self.issues = issues
 
 
 class NodeRetryRefusedError(WorkflowRunError):
@@ -268,20 +283,6 @@ class _Decision:
 _WAIT = _Decision("wait")
 
 
-def _gate_decision(task: Task) -> str:
-    """What the reviewer chose, read from the row the control plane wrote.
-
-    Falls back to the row's status so a gate resolved through the ordinary
-    task-review surface still reads correctly: ``done`` is an approval and
-    ``failed`` is a rejection. The recorded decision wins because it carries
-    the third outcome — returned for revision — which no status can express.
-    """
-    recorded = str(task.metadata.get("gate_decision") or "")
-    if recorded in ("approved", "rejected", "returned_for_revision"):
-        return recorded
-    return "approved" if task.status == "done" else "rejected"
-
-
 class WorkflowRunner:
     """Starts runs, advances the frontier, and rolls terminal state into the Run."""
 
@@ -311,6 +312,7 @@ class WorkflowRunner:
         lease: WorkflowRunnerLease | None = None,
         reclaim_after_s: float = 900.0,
         sleep: Callable[[float], Awaitable[None]] | None = None,
+        work_events: WorkEventSink | None = None,
     ) -> None:
         self._tasks = tasks
         self._runs = runs
@@ -355,6 +357,17 @@ class WorkflowRunner:
         self._last_known_channels: list[str] = []
         self._state_condition = asyncio.Condition()
         self._state_version = 0
+        self._events = RunEvents(
+            work_events, clock=self._clock, owner_of=self._workflow_owner, audit=self._audit
+        )
+        self._deadlines = GateDeadlines(
+            tasks=tasks,
+            runner_did=runner_did,
+            events=self._events,
+            tell_operator=self._tell_operator,
+            audit=self._audit,
+            fence=self._mutation_fence,
+        )
 
     # -- public surface ----------------------------------------------------
 
@@ -392,6 +405,10 @@ class WorkflowRunner:
         """
         return self._sink
 
+    def now(self) -> datetime:
+        """The runner's clock: the time a decision on one of its rows is recorded at."""
+        return self._clock()
+
     async def member_roles(self, did: str) -> frozenset[str]:
         """The team-registry roles ``did`` holds; empty when no roster is wired.
 
@@ -403,12 +420,14 @@ class WorkflowRunner:
         return await self._roles.roles_of(did)
 
     async def gate_approvers(self, task: Task) -> tuple[str, ...]:
-        """Who may decide gate row ``task``, read from the run's PINNED definition.
+        """Who may decide human-step row ``task``, read from the run's PINNED definition.
 
         Never from the row: a task row is a mutable record, and the approver list
         is authority, so it comes from the signed bundle the run is bound to. The
         row's id must be the one its claimed (run, node, iteration) derives, so a
-        row cannot borrow another gate's approvers.
+        row cannot borrow another gate's approvers. An escalation adds the
+        signed ``escalate_to`` only once the row records that exact target, so
+        a forged ``escalated_to`` grants nothing.
 
         Raises:
             WorkflowRunError: the row, run, or definition does not line up.
@@ -423,19 +442,21 @@ class WorkflowRunner:
         if bundle.content_hash != run.content_hash:
             raise WorkflowRunError("the definition changed under this run")
         node = bundle.definition.node_by_id(node_id)
-        if node.kind != "gate":
+        if node.kind not in HUMAN_STEP_KINDS:
             raise WorkflowRunError(f"node {node_id!r} is not a gate")
-        return tuple(cast(GateNodeSpec, node).approvers)
+        step = cast(HumanStepSpec, node)
+        escalated = task.metadata.get("escalated_to")
+        if step.escalate_to is not None and escalated == step.escalate_to:
+            return (*step.approvers, step.escalate_to)
+        return tuple(step.approvers)
 
     async def _refuse_undeclared_gate_roles(
         self, definition: WorkflowSpec, initiator_did: str
     ) -> None:
         """A gate naming a role no team member holds can never be decided: refuse
         the run up front with the reason, rather than strand it at the gate."""
-        if not any(
-            node.kind == "gate" and approver_roles(cast(GateNodeSpec, node).approvers)
-            for node in definition.nodes
-        ):
+        steps = [cast(HumanStepSpec, n) for n in definition.nodes if n.kind in HUMAN_STEP_KINDS]
+        if not any(approver_roles((*s.approvers, s.escalate_to or "")) for s in steps):
             return
         declared = frozenset() if self._roles is None else await self._roles.declared_roles()
         issues = check_gate_roles(definition, declared)
@@ -458,12 +479,48 @@ class WorkflowRunner:
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
         initiator: Initiator,
         initiator_did: str,
+        trigger: TriggerSpec,
         run_id: str | None = None,
         trigger_digest: str | None = None,
         detached: bool = False,
         mode: RunMode = "live",
     ) -> RunRecord:
+        """Start a run; see :meth:`start_or_replay`, which also says whether it was new."""
+        run, _created = await self.start_or_replay(
+            workflow_id,
+            input=input,
+            initiator=initiator,
+            initiator_did=initiator_did,
+            trigger=trigger,
+            run_id=run_id,
+            trigger_digest=trigger_digest,
+            detached=detached,
+            mode=mode,
+        )
+        return run
+
+    async def start_or_replay(
+        self,
+        workflow_id: str,
+        *,
+        input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
+        initiator: Initiator,
+        initiator_did: str,
+        trigger: TriggerSpec,
+        run_id: str | None = None,
+        trigger_digest: str | None = None,
+        detached: bool = False,
+        mode: RunMode = "live",
+    ) -> tuple[RunRecord, bool]:
         """Create the Run record, then materialize the first frontier.
+
+        Returns the run and whether THIS call created it (``False``: the same
+        pinned run id replayed an existing run), so a caller auditing the start
+        never records a replay as a second start.
+
+        ``trigger`` names what started the run. The input is validated against
+        the governing schema (the event's for an event run, else the workflow
+        input schema) before the Run row exists, and stored with ``arc_trigger``.
 
         ``mode="test"`` is the one way an unsigned draft runs above personal
         tier: the run id is minted in the reserved test namespace, trust is not
@@ -512,6 +569,7 @@ class WorkflowRunner:
         assert_owner_is_real(workflow_id, definition.owner, definition.nodes)
         assert_channel_binding(definition.channel)
         await self._refuse_undeclared_gate_roles(definition, initiator_did)
+        self._refuse_inadmissible_input(bundle, input, initiator, initiator_did, trigger)
         budget = definition.budget
         run_id = run_id or f"run-{uuid4().hex[:12]}"
         # A caller-supplied run id becomes part of every task key this run
@@ -525,7 +583,7 @@ class WorkflowRunner:
             trigger_digest=trigger_digest,
             initiator_did=initiator_did,
             channel=definition.channel,
-            input=dict(input),
+            input=stamped_input(input, trigger),
             budget_tokens=None if budget is None else budget.tokens,
             budget_cost_usd=TEST_RUN_MAX_COST_USD if test_mode else None,
             budget_wall_clock_s=None if budget is None else budget.wall_clock_s,
@@ -543,7 +601,7 @@ class WorkflowRunner:
                 actor_did=initiator_did,
                 extra={"initiator": initiator},
             )
-            return run if detached else await self.advance(run_id)
+            return (run if detached else await self.advance(run_id)), False
         self._audit(
             "workflow.run.started",
             target=f"{definition.id}/{run_id}",
@@ -568,8 +626,33 @@ class WorkflowRunner:
                 version=definition.version,
             )
         if detached:
-            return run
-        return await self.advance(run_id)
+            return run, True
+        return await self.advance(run_id), True
+
+    def _refuse_inadmissible_input(
+        self,
+        bundle: BundleSpec,
+        run_input: Mapping[str, Any],
+        initiator: Initiator,
+        initiator_did: str,
+        trigger: TriggerSpec,
+    ) -> None:
+        """Refuse (audited) an input or trigger the definition does not admit (D-843)."""
+        issues = admission_issues(bundle, run_input, initiator=initiator, trigger=trigger)
+        if not issues:
+            return
+        self._audit(
+            "workflow.run.refused",
+            target=bundle.definition.id,
+            outcome="invalid_input",
+            actor_did=initiator_did,
+            extra={
+                "initiator": initiator,
+                "trigger": trigger.kind,
+                "fields": [issue.field for issue in issues],
+            },
+        )
+        raise WorkflowInputRefusedError(bundle.definition.id, issues)
 
     def _admit_unsigned(self, workflow_id: str, initiator: Initiator, initiator_did: str) -> None:
         """Allow an unsigned run only as an operator draft test at personal tier.
@@ -668,6 +751,11 @@ class WorkflowRunner:
             )
         await self._reconcile_node_states(await self._require_run(run.run_id))
         await self._recheck_if_foreign_attempts_live(run.run_id)
+        # A waiting event lost to a crash (or a runner with no log) is re-sent;
+        # its id is derived, so the log keeps one copy.
+        for row in await self._tasks.query_by_flow_run(run.run_id):
+            if row.status == "review":
+                await self._events.node_waiting(run, row)
 
     async def _recheck_if_foreign_attempts_live(self, run_id: str) -> None:
         """Come back for attempts another process owns: they are spared only while it beats.
@@ -1089,6 +1177,10 @@ class WorkflowRunner:
         real stall.
         """
         rows = await self._tasks.query_by_flow_run(run.run_id)
+        # A passed human-step deadline settles (or escalates) its row before the
+        # state is derived, so this same pass acts on the outcome (D-846).
+        if await self._deadlines.sweep(run, rows, self._clock()):
+            rows = await self._tasks.query_by_flow_run(run.run_id)
         state = RunState(rows, run.path_taken)
         scope = state.scope(run.input)
         changed = await self._reconcile_materializations(run, state)
@@ -1264,6 +1356,9 @@ class WorkflowRunner:
             "iteration": iteration,
             "idempotency_key": task_id,
             "upstream": upstream,
+            # Which upstream outputs a person typed: the node section labels them
+            # as data, never instructions (COMP-015).
+            "upstream_kinds": {a: definition.node_by_id(a).kind for a in upstream},
             "strategy": list(node.strategy),
             "output_schema": node.output_schema,
             "artifacts": list(node.artifacts),
@@ -1309,16 +1404,22 @@ class WorkflowRunner:
             router_node = cast(RouterNodeSpec, node)
             metadata["routes"] = [route.to for route in router_node.routes]
             metadata["router_mode"] = router_node.mode
+        human = node.kind in HUMAN_STEP_KINDS
+        if human:
+            try:
+                metadata |= human_step_metadata(node, metadata["bundle_root"], self._clock())
+            except SchemaRefusedError as exc:
+                raise NodeDecisionError(node.id, str(exc)) from exc
         return Task(
             id=task_id,
             title=f"{definition.id}: {node.id}",
-            status="review" if node.kind == "gate" else ("todo" if owner_did else "backlog"),
+            status="review" if human else ("todo" if owner_did else "backlog"),
             owner_did=owner_did,
             creator_did=self._runner_did,
             blocked_by=blocked_by,
             tags=["workflow", definition.id],
             metadata=metadata,
-            requires_review=node.kind == "gate",
+            requires_review=human,
             max_attempts=node.max_attempts or 3,
             timeout_seconds=node.timeout_s,
         )
@@ -1405,16 +1506,18 @@ class WorkflowRunner:
             },
         )
         kind = str(task.metadata.get("node_kind", ""))
-        if kind == "gate":
-            await self._push_gate_card(run, node_id, task.id)
+        if kind in HUMAN_STEP_KINDS:
+            await self._push_gate_card(run, node_id, task.id, kind)
+            await self._events.node_waiting(run, task)
         if self._narrator is not None:
-            if kind == "gate":
+            if kind in HUMAN_STEP_KINDS:
                 await self._narrator.gate_waiting(
                     channel=run.channel,
                     run_id=run.run_id,
                     node_id=node_id,
                     task_id=task.id,
                     workflow_id=run.workflow_id,
+                    kind=kind,
                 )
             else:
                 await self._narrator.node_started(
@@ -1615,7 +1718,7 @@ class WorkflowRunner:
     async def _resolve_gates(
         self, run: RunRecord, definition: WorkflowSpec, state: RunState
     ) -> tuple[list[tuple[NodeSpec, int]], bool]:
-        """Record a gate an operator has since decided, once.
+        """Record a gate or human_input someone (or its deadline) has since decided, once.
 
         Returns the node instances a ``return_for_revision`` decision puts back
         on the frontier (REQ-247): the reviewer sends the work back to whoever
@@ -1625,14 +1728,14 @@ class WorkflowRunner:
         revisions: list[tuple[NodeSpec, int]] = []
         changed = False
         for node in definition.nodes:
-            if node.kind != "gate":
+            if node.kind not in HUMAN_STEP_KINDS:
                 continue
             instance = state.latest(node.id)
             if instance is None or instance.task.status not in ("done", "failed"):
                 continue
             if (node.id, instance.iteration) in state.gates:
                 continue
-            decision = _gate_decision(instance.task)
+            decision = recorded_decision(instance.task)
             state.gates.add((node.id, instance.iteration))
             if decision == "returned_for_revision":
                 # Mark it superseded IN THIS PASS: the durable path is only
@@ -1684,7 +1787,7 @@ class WorkflowRunner:
         notes travel on the Run's journal rather than in a message, so the
         agent doing the rework reads what the reviewer actually said.
         """
-        notes = str(instance.task.metadata.get("gate_notes") or "")
+        notes = recorded_notes(instance.task)
         pending: list[tuple[NodeSpec, int]] = []
         for need in node.needs:
             iteration = state.materialized_count(need)
@@ -1904,6 +2007,7 @@ class WorkflowRunner:
             return await self._require_run(run_id)
         await self._cancel_open_nodes(run, resolution)
         await self._append(run_id, {"kind": "outcome", "status": status, "detail": resolution})
+        await self._events.run_ended(run, status)
         self._audit(
             "workflow.run.finished",
             target=f"{run.workflow_id}/{run_id}",
@@ -1918,17 +2022,18 @@ class WorkflowRunner:
             await self._notify_operator_of_failure(run, resolution)
         return await self._require_run(run_id)
 
-    async def _push_gate_card(self, run: RunRecord, node_id: str, task_id: str) -> None:
+    async def _push_gate_card(self, run: RunRecord, node_id: str, task_id: str, kind: str) -> None:
         """Put the approval card in front of the operator, wherever they are.
 
         A gate waits on a human, and the narration line only reaches a bound
         channel. The card names the row and the three verbs; a platform that has
         buttons renders them, and every verb lands on the same authorized
         ``/gate`` command. Keyed on the row id, so a re-derived materialization
-        or a restarted runner never pushes it twice.
+        or a restarted runner never pushes it twice. A human_input card points at
+        the dashboard instead: its answer is a form, not a verb.
         """
         delivered = await self._tell_operator(
-            gate_card_text(run.workflow_id, run.run_id, node_id, task_id),
+            gate_card_text(run.workflow_id, run.run_id, node_id, task_id, kind=kind),
             f"workflow-gate:{task_id}",
             run,
         )
@@ -1949,9 +2054,7 @@ class WorkflowRunner:
         if self._operator_notifier is None:
             return False
         try:
-            link_path = (
-                f"/workflows/{quote(run.workflow_id, safe='')}?run={quote(run.run_id, safe='')}"
-            )
+            link_path = run_page_path(run.workflow_id, run.run_id)
             channel = await self._operator_notifier(text, idempotency_key, link_path)
         except Exception:  # reason: the run is already terminal; report, do not raise
             logger.warning("operator notice %s not delivered", idempotency_key, exc_info=True)
@@ -2096,13 +2199,18 @@ class WorkflowRunner:
     async def _owner_for(self, node: NodeSpec, definition: WorkflowSpec) -> str | None:
         handle = node.agent or definition.owner
         if handle is None:
-            if node.kind == "gate":
-                return None  # a gate is resolved by a human, not owned by an agent
+            if node.kind in HUMAN_STEP_KINDS:
+                return None  # a human step is resolved by a person, not owned by an agent
             raise NodeDecisionError(node.id, "no agent is named and the workflow has no owner")
         owner = await self._owners.resolve_owner(handle)
         if owner is None:
             raise NodeDecisionError(node.id, f"unknown agent {handle!r}")
         return owner
+
+    async def _workflow_owner(self, run: RunRecord) -> str | None:
+        """The DID of the run's workflow owner agent (who its work events belong to)."""
+        owner = self._bundle_for_dispatch(run).definition.owner
+        return None if owner is None else await self._owners.resolve_owner(owner)
 
     async def _require_run(self, run_id: str) -> RunRecord:
         run = await self._runs.get(run_id)
@@ -2240,6 +2348,9 @@ def build_workflow_runner(
         # the same deployment share it, so the lease generates a per-process
         # owner nonce for fencing.
         lease=WorkflowRunnerLease(task_store_backend),
+        # Gate waits, escalations and run outcomes land in the same store's
+        # work-event log that callbacks and the SSE stream read (D-847).
+        work_events=arcstore.WorkEventLog(task_store_backend, sink=sink),
     )
 
 
@@ -2304,6 +2415,7 @@ __all__ = [
     "NodeDecisionError",
     "NodeStateConflict",
     "UnsignedWorkflowRefusedError",
+    "WorkflowInputRefusedError",
     "WorkflowRunError",
     "WorkflowRunNotFoundError",
     "WorkflowRunner",

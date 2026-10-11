@@ -81,7 +81,7 @@ async def test_the_provider_maps_words_onto_control_plane_decisions(
         "t1",
         decision="fail_run",
         notes="no",
-        actor_did=_USER,
+        decider_did=_USER,
         actor_roles=frozenset({"reviewer"}),
     )
     plane.runner.member_roles.assert_awaited_once_with(_USER)

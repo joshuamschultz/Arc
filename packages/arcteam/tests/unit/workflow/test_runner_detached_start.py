@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from arcteam.workflow.runner import WorkflowRunnerLeaseUnavailableError
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import Definition, Node
 from .test_runner_frontier import build
@@ -41,7 +42,11 @@ async def test_attached_start_requires_the_lease(stores: Any, registry: Any) -> 
 
     with pytest.raises(WorkflowRunnerLeaseUnavailableError):
         await runner.start_run(
-            "detached-flow", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+            "detached-flow",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:local:user/9",
+            trigger=TriggerContext("manual"),
         )
 
 
@@ -57,6 +62,7 @@ async def test_detached_start_creates_the_run_without_the_lease(
         initiator="operator",
         initiator_did="did:arc:local:user/9",
         detached=True,
+        trigger=TriggerContext("manual"),
     )
 
     assert run.status == "running"

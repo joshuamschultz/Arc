@@ -21,6 +21,7 @@ from arcteam.workflow.runner import (
     UnsignedWorkflowRefusedError,
     is_test_run,
 )
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     SALES_DID,
@@ -119,7 +120,13 @@ async def test_state_modifying_tools_are_stubbed_and_run_never_scheduled(
     plane, sink = _plane(stores, registry, tier)
 
     # The live path still refuses an unsigned draft where the tier demands it.
-    live = await plane.run(WORKFLOW, input={}, initiator="operator", actor_did=OPERATOR)
+    live = await plane.run(
+        WORKFLOW,
+        input={},
+        initiator="operator",
+        actor_did=OPERATOR,
+        trigger=TriggerContext("manual"),
+    )
     assert live.ok == (tier == "personal")
 
     result = await plane.test_run(WORKFLOW, actor_did=OPERATOR)
@@ -144,10 +151,19 @@ async def test_state_modifying_tools_are_stubbed_and_run_never_scheduled(
     # reserved test namespace cannot be claimed by a live start.
     with pytest.raises(UnsignedWorkflowRefusedError):
         await plane.runner.start_run(
-            WORKFLOW, input={}, initiator="scheduler", initiator_did=OPERATOR
+            WORKFLOW,
+            input={},
+            initiator="scheduler",
+            initiator_did=OPERATOR,
+            trigger=TriggerContext("cron"),
         )
     spoof = await plane.run(
-        WORKFLOW, input={}, initiator="operator", actor_did=OPERATOR, run_id="test-forged"
+        WORKFLOW,
+        input={},
+        initiator="operator",
+        actor_did=OPERATOR,
+        run_id="test-forged",
+        trigger=TriggerContext("manual"),
     )
     assert not spoof.ok
 
@@ -156,7 +172,13 @@ async def test_a_live_run_is_not_flagged_as_a_test(stores: Any, registry: Any) -
     flow_tasks, _, _ = stores
     plane, _ = _plane(stores, registry, "personal")
 
-    result = await plane.run(WORKFLOW, input={}, initiator="operator", actor_did=OPERATOR)
+    result = await plane.run(
+        WORKFLOW,
+        input={},
+        initiator="operator",
+        actor_did=OPERATOR,
+        trigger=TriggerContext("manual"),
+    )
 
     assert result.run is not None and not is_test_run(result.run.run_id)
     rows = await flow_tasks.query_by_flow_run(result.run.run_id)

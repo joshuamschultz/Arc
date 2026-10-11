@@ -25,6 +25,7 @@ from arcstore.tasks import (
 )
 
 from arcteam.workflow.runner import WorkflowRunner
+from arcteam.workflow.runner_contracts import TriggerContext
 from arcteam.workflow.stores import WorkflowRunStore, WorkflowTaskStore
 
 from .conftest import RUNNER_DID, SALES_DID, Bundle, evaluate, resolve_args, task_id
@@ -85,7 +86,12 @@ async def claim_node(
 
 async def start(world: World, run_id: str) -> None:
     await world.new_runner().start_run(
-        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id=run_id
+        "chain3",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id=run_id,
+        trigger=TriggerContext("manual"),
     )
 
 

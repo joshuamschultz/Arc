@@ -134,7 +134,9 @@ async def test_new_signed_revision_same_due_slot_cannot_reuse_workflow_run(
         *,
         run_id: str,
         trigger_digest: str,
+        trigger_kind: str,
     ) -> Any:
+        del trigger_kind
         run, _ = await store.create_run(
             run_id=run_id,
             workflow_id=workflow_id,

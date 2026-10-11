@@ -25,6 +25,7 @@ from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import TaskStore
 from arcteam.workflow.narrator import RunNarrator
 from arcteam.workflow.runner import build_workflow_runner, node_task_id
+from arcteam.workflow.runner_contracts import TriggerContext
 from arctrust import OperatorKey
 from arcui.routes.workflows import OperatorActor
 from arcui.workflow_plane import build_dashboard_plane
@@ -206,6 +207,7 @@ async def test_j3_cron_trigger_fires_after_runner_restart_and_lease_renewal(
                 input={},
                 initiator="operator",
                 initiator_did="did:arc:ui:operator",
+                trigger=TriggerContext("manual"),
             )
 
         engine._dispatch = start_run.__get__(engine)  # type: ignore[method-assign]
@@ -260,6 +262,7 @@ async def test_restart_between_fire_and_tick_yields_exactly_one_completed_run(
             initiator_did="did:arc:ui:operator",
             run_id=run_id,
             detached=True,
+            trigger=TriggerContext("manual"),
         )
 
     await fire(world.runner)

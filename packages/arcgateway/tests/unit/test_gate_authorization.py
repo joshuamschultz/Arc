@@ -9,6 +9,7 @@ from anything typed, and pairing alone confers none.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,6 +36,7 @@ class _Row:
     metadata: dict[str, Any] = field(
         default_factory=lambda: {"node_kind": "gate", "flow_run_id": "run-1", "node_id": "review"}
     )
+    output: dict[str, Any] | None = None
 
 
 class _Tasks:
@@ -52,7 +54,7 @@ class _Tasks:
             return None
         self.writes += 1
         self.row.status = patch["status"]
-        self.row.metadata = patch["metadata"]
+        self.row.output = patch["output"]
         return self.row
 
 
@@ -66,6 +68,9 @@ class _Runner:
 
     async def member_roles(self, did: str) -> frozenset[str]:
         return REGISTRY_ROLES.get(did, frozenset())
+
+    def now(self) -> datetime:
+        return datetime(2026, 10, 10, tzinfo=UTC)
 
     async def gate_approvers(self, task: Any) -> tuple[str, ...]:
         return self._approvers
@@ -164,7 +169,7 @@ async def test_a_registered_role_holder_decides(monkeypatch: pytest.MonkeyPatch)
     reply = await GateCommand(provider).handle(_ctx(REVIEWER, f"{GATE} approve"))
 
     assert reply == f"Gate {GATE} approved."
-    assert runner.tasks.row.metadata["gate_actor_did"] == REVIEWER
+    assert runner.tasks.row.output["decided_by"] == REVIEWER
 
 
 async def test_a_replayed_approve_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -14,11 +14,32 @@ scheduler reaching into the builder-tool surface.
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Literal, NamedTuple
 
 from arcagent.modules.workflows import _runtime
 
 _logger = logging.getLogger("arcagent.modules.workflows.run_entry")
+
+ScheduleTriggerKind = Literal["cron", "interval", "manual"]
+"""The trigger kinds a typed run entry may name. ``event`` is never one: an event
+run starts only through the control plane's ``fire_event`` (SPEC-088 COMP-007)."""
+
+_TRIGGER_KINDS: dict[str, ScheduleTriggerKind] = {
+    "cron": "cron",
+    "interval": "interval",
+    "manual": "manual",
+}
+
+
+class RunTrigger(NamedTuple):
+    """What started a run, in the ``(kind, name)`` shape the control plane reads.
+
+    The agent's own value: arcagent never imports the orchestration layer, so it
+    names the trigger structurally and the control plane reads ``kind``/``name``.
+    """
+
+    kind: ScheduleTriggerKind
+    name: str | None = None
 
 
 async def start_workflow_run(
@@ -27,13 +48,24 @@ async def start_workflow_run(
     *,
     run_id: str | None = None,
     trigger_digest: str | None = None,
+    trigger_kind: str,
 ) -> dict[str, Any]:
     """Start a run of ``workflow_id``. Raises on refusal so a caller's breaker sees it.
+
+    ``trigger_kind`` is the schedule entry type (``cron`` / ``interval``) or
+    ``manual``; the run records it as ``arc_trigger`` and validates its input
+    (D-843). Any other kind (``once``, ``event``, a typo) is refused fail-closed.
 
     Raising rather than returning an error is deliberate: the scheduler's
     circuit breaker counts consecutive failures, and a swallowed refusal would
     let a permanently broken trigger fire forever without ever tripping it.
     """
+    kind = _TRIGGER_KINDS.get(trigger_kind)
+    if kind is None:
+        raise ValueError(
+            f"workflow '{workflow_id}' cannot be started by a {trigger_kind!r} trigger; "
+            f"allowed: {', '.join(_TRIGGER_KINDS)}"
+        )
     await _runtime.ensure_control_plane()
     st = _runtime.state()
     if st.control_plane is None:
@@ -45,6 +77,7 @@ async def start_workflow_run(
         input=workflow_input or {},
         initiator="scheduler",
         actor_did=st.identity.did,
+        trigger=RunTrigger(kind),
         run_id=run_id,
         trigger_digest=trigger_digest,
     )
@@ -63,4 +96,4 @@ async def start_workflow_run(
     }
 
 
-__all__ = ["start_workflow_run"]
+__all__ = ["RunTrigger", "ScheduleTriggerKind", "start_workflow_run"]

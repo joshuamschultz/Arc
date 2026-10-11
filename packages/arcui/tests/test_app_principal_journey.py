@@ -372,8 +372,8 @@ class TestPersonalJourney:
 
         # The gate row records the person as the decider, never a fixed operator.
         row = await j.runner.tasks.get(task_id)
-        assert row.metadata["gate_actor_did"] == approver
-        assert row.metadata["gate_actor_did"] != FIXED_OPERATOR_DID
+        assert row.output["decided_by"] == approver
+        assert row.output["decided_by"] != FIXED_OPERATOR_DID
 
         # The control plane's decision names the person, initiated by the app.
         resolved = j.gate_events("workflow.gate.resolved", task_id)
@@ -504,7 +504,7 @@ class TestFederalJourney:
         )
         assert decided.status_code == 200, decided.text
         row = await j.runner.tasks.get(task_id)
-        assert row.metadata["gate_actor_did"] == approver
+        assert row.output["decided_by"] == approver
         resolved = j.gate_events("workflow.gate.resolved", task_id)
         assert len(resolved) == 1, j.workflow_audit.events
         assert resolved[0].causal is not None

@@ -17,6 +17,7 @@ from arcteam.workflow import GateNode, GateNotAuthorizedError
 from arcteam.workflow.control_plane import OPERATOR_ROLE, WorkflowControlPlane
 from arcteam.workflow.narrator import RunNarrator
 from arcteam.workflow.runner import WorkflowRunError, WorkflowRunner
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     RUNNER_DID,
@@ -125,7 +126,13 @@ async def at_the_gate(
 ) -> tuple[WorkflowRunner, WorkflowControlPlane, str]:
     _, _, tasks = stores
     runner, plane = build(stores, definition, registry, sink, **kwargs)
-    run = await runner.start_run("gated", input={}, initiator="operator", initiator_did=OPERATOR)
+    run = await runner.start_run(
+        "gated",
+        input={},
+        initiator="operator",
+        initiator_did=OPERATOR,
+        trigger=TriggerContext("manual"),
+    )
     await complete_node(tasks, task_id(run.run_id, "draft", 0), SALES_DID, {"draft": "v1"})
     await runner.advance(run.run_id)
     return runner, plane, run.run_id
@@ -155,7 +162,7 @@ async def test_gate_resolve_refused_for_unlisted_paired_user(stores: Any) -> Non
         await plane.resolve_gate(
             gate,
             decision="approve",
-            actor_did=PAIRED_USER,
+            decider_did=PAIRED_USER,
             actor_roles=await registry.roles_of(PAIRED_USER),
         )
 
@@ -174,7 +181,7 @@ async def test_gate_with_no_approvers_refuses_everyone_but_the_operator(stores: 
         await plane.resolve_gate(
             task_id(run_id, "review", 0),
             decision="approve",
-            actor_did=REVIEWER_USER,
+            decider_did=REVIEWER_USER,
             actor_roles=frozenset({"reviewer"}),
         )
     assert len(denials(sink)) == 1
@@ -187,7 +194,7 @@ async def test_gate_resolve_allowed_for_operator_by_default(stores: Any) -> None
     result = await plane.resolve_gate(
         task_id(run_id, "review", 0),
         decision="approve",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -206,7 +213,7 @@ async def test_operator_decides_even_a_gate_that_lists_others(stores: Any) -> No
     result = await plane.resolve_gate(
         task_id(run_id, "review", 0),
         decision="fail_run",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -221,12 +228,12 @@ async def test_gate_resolve_allowed_for_declared_role(stores: Any) -> None:
     result = await plane.resolve_gate(
         task_id(run_id, "review", 0),
         decision="approve",
-        actor_did=REVIEWER_USER,
+        decider_did=REVIEWER_USER,
         actor_roles=await registry.roles_of(REVIEWER_USER),
     )
 
     assert result.ok
-    assert (await gate_row(stores, run_id)).metadata["gate_actor_did"] == REVIEWER_USER
+    assert (await gate_row(stores, run_id)).output["decided_by"] == REVIEWER_USER
 
 
 async def test_gate_resolve_allowed_for_listed_did(stores: Any) -> None:
@@ -236,7 +243,7 @@ async def test_gate_resolve_allowed_for_listed_did(stores: Any) -> None:
     result = await plane.resolve_gate(
         task_id(run_id, "review", 0),
         decision="approve",
-        actor_did=LISTED_USER,
+        decider_did=LISTED_USER,
         actor_roles=frozenset(),
     )
 
@@ -251,7 +258,7 @@ async def test_a_listed_did_never_matches_by_prefix(stores: Any) -> None:
         await plane.resolve_gate(
             task_id(run_id, "review", 0),
             decision="approve",
-            actor_did=LISTED_USER + "0",
+            decider_did=LISTED_USER + "0",
             actor_roles=frozenset(),
         )
 
@@ -272,7 +279,7 @@ async def test_approvers_come_from_the_signed_definition_not_the_row(stores: Any
 
     with pytest.raises(GateNotAuthorizedError):
         await plane.resolve_gate(
-            gate, decision="approve", actor_did=PAIRED_USER, actor_roles=frozenset()
+            gate, decision="approve", decider_did=PAIRED_USER, actor_roles=frozenset()
         )
 
 
@@ -281,11 +288,11 @@ async def test_a_replayed_approve_is_refused(stores: Any) -> None:
     _, plane, run_id = await at_the_gate(stores, gated(), team(), sink)
     gate = task_id(run_id, "review", 0)
     first = await plane.resolve_gate(
-        gate, decision="approve", actor_did=OPERATOR, actor_roles=OPERATOR_ROLES
+        gate, decision="approve", decider_did=OPERATOR, actor_roles=OPERATOR_ROLES
     )
 
     replay = await plane.resolve_gate(
-        gate, decision="approve", actor_did=OPERATOR, actor_roles=OPERATOR_ROLES
+        gate, decision="approve", decider_did=OPERATOR, actor_roles=OPERATOR_ROLES
     )
 
     assert first.ok
@@ -307,7 +314,13 @@ async def test_unknown_role_in_approvers_refuses_run_start(stores: Any) -> None:
     runner, _ = build(stores, gated(("role:ghost",)), team(), sink)
 
     with pytest.raises(WorkflowRunError, match="role:ghost"):
-        await runner.start_run("gated", input={}, initiator="operator", initiator_did=OPERATOR)
+        await runner.start_run(
+            "gated",
+            input={},
+            initiator="operator",
+            initiator_did=OPERATOR,
+            trigger=TriggerContext("manual"),
+        )
 
     refused = [e for e in sink.events if e.action == "workflow.run.refused"]
     assert refused and refused[0].outcome == "unknown_gate_role"
@@ -320,7 +333,13 @@ async def test_a_role_gate_with_no_roster_refuses_run_start(stores: Any) -> None
     runner, _ = build(stores, gated(("role:reviewer",)), team(roles={}), sink)
 
     with pytest.raises(WorkflowRunError):
-        await runner.start_run("gated", input={}, initiator="operator", initiator_did=OPERATOR)
+        await runner.start_run(
+            "gated",
+            input={},
+            initiator="operator",
+            initiator_did=OPERATOR,
+            trigger=TriggerContext("manual"),
+        )
 
 
 # -- the approval card -------------------------------------------------------

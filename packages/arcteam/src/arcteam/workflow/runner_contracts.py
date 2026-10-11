@@ -19,9 +19,8 @@ it is allowed to touch.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, NamedTuple, Protocol
 
 from arcstore.mutation_fence import RunnerFence
 from arcstore.runs import NodeState
@@ -50,18 +49,34 @@ RunStatus = Literal[
 ]
 NodeKind = Literal["agent", "tool", "script", "router", "gate", "human_input"]
 OnFailure = Literal["fail_run", "continue", "skip_dependents"]
+OnTimeout = Literal["fail", "continue", "escalate"]
 BundleStatus = Literal["draft", "signed", "archived"]
 
 TriggerKind = Literal["manual", "cron", "interval", "event"]
 
 
-@dataclass(frozen=True)
-class TriggerContext:
+class TriggerSpec(Protocol):
     """What started a run, recorded on the run input as ``arc_trigger``.
 
     ``name`` is the fired event's name for ``kind == "event"``, else ``None``.
     It selects the governing schema: an event run validates against that
     event's schema, every other run against the workflow's input schema.
+
+    Structural so a layer below this one (an agent's scheduler) can name its
+    trigger with its own value type and never import arcteam.
+    """
+
+    @property
+    def kind(self) -> TriggerKind: ...
+    @property
+    def name(self) -> str | None: ...
+
+
+class TriggerContext(NamedTuple):
+    """arcteam's own :class:`TriggerSpec` value.
+
+    A ``NamedTuple`` so it compares equal to any other layer's
+    ``(kind, name)`` value carrying the same trigger.
     """
 
     kind: TriggerKind
@@ -73,6 +88,9 @@ TERMINAL_RUN_STATUSES: frozenset[str] = frozenset(
 )
 #: A node can be retried only once the run has stopped on a failure.
 RETRYABLE_RUN_STATUSES: frozenset[str] = frozenset({"failed", "done_with_failures"})
+#: Node kinds a person resolves: a waiting ``review`` row, an approver list,
+#: an optional deadline (SPEC-088 D-845, D-846).
+HUMAN_STEP_KINDS: frozenset[str] = frozenset({"gate", "human_input"})
 #: Task statuses that mean a node is still owed work (in flight, not terminal).
 IN_FLIGHT_TASK_STATUSES: frozenset[str] = frozenset({"backlog", "todo", "in_progress", "review"})
 
@@ -151,13 +169,33 @@ class ToolNodeSpec(NodeSpec, Protocol):
     def args(self) -> Mapping[str, Any]: ...
 
 
-class GateNodeSpec(NodeSpec, Protocol):
-    """A human decision: who may decide it is part of the signed definition."""
+class HumanStepSpec(NodeSpec, Protocol):
+    """A step a person resolves (gate or human_input).
+
+    Who may decide, what a passed deadline does, and who an escalation adds
+    are all part of the signed definition, never the row.
+    """
+
+    @property
+    def approvers(self) -> Sequence[str]: ...
+    @property
+    def on_timeout(self) -> OnTimeout: ...
+    @property
+    def escalate_to(self) -> str | None: ...
+
+
+class GateNodeSpec(HumanStepSpec, Protocol):
+    """A human decision on upstream work."""
 
     @property
     def gate(self) -> str: ...
+
+
+class HumanInputNodeSpec(HumanStepSpec, Protocol):
+    """A person supplies data the run needs (SPEC-088 D-845)."""
+
     @property
-    def approvers(self) -> Sequence[str]: ...
+    def prompt(self) -> str: ...
 
 
 class RoleRoster(Protocol):
@@ -557,6 +595,7 @@ class OwnerResolver(Protocol):
 
 
 __all__ = [
+    "HUMAN_STEP_KINDS",
     "IN_FLIGHT_TASK_STATUSES",
     "RETRYABLE_RUN_STATUSES",
     "TERMINAL_RUN_STATUSES",
@@ -569,11 +608,14 @@ __all__ = [
     "DefinitionValidator",
     "EventSchemaSpec",
     "GateNodeSpec",
+    "HumanInputNodeSpec",
+    "HumanStepSpec",
     "Initiator",
     "InputSchemaSpec",
     "NodeKind",
     "NodeSpec",
     "OnFailure",
+    "OnTimeout",
     "OperatorNotifier",
     "OwnerResolver",
     "PredicateEvaluator",
@@ -587,6 +629,7 @@ __all__ = [
     "ToolNodeSpec",
     "TriggerContext",
     "TriggerKind",
+    "TriggerSpec",
     "ValidationIssueLike",
     "WorkflowSpec",
     "WorkflowTaskStoreLike",

@@ -16,6 +16,7 @@ from __future__ import annotations
 from typing import Any
 
 from arcteam.workflow.runner import WorkflowRunner
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     RUNNER_DID,
@@ -85,7 +86,11 @@ async def test_next_node_is_stamped_with_what_the_previous_node_lit(
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, two_node_chain())
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {"ok": True})
@@ -101,7 +106,11 @@ async def test_a_node_that_lit_nothing_stamps_an_empty_set(stores: Any, registry
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, two_node_chain())
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {"ok": True})
@@ -125,7 +134,11 @@ async def test_accumulation_unions_across_every_completed_node(stores: Any, regi
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "fan", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+        "fan",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/1",
+        trigger=TriggerContext("manual"),
     )
 
     for node_id, leg in (("a", "private_data"), ("b", "untrusted_input")):
@@ -145,7 +158,11 @@ async def test_accumulation_is_bounded_and_the_truncation_is_audited(
     sink = RecordingSink()
     runner = build(stores, registry, two_node_chain(), audit_sink=sink, max_capability_legs=2)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {})
@@ -165,7 +182,11 @@ async def test_materialization_audit_records_the_legs_the_node_starts_with(
     sink = RecordingSink()
     runner = build(stores, registry, two_node_chain(), audit_sink=sink)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "read", 0), SALES_DID, {})

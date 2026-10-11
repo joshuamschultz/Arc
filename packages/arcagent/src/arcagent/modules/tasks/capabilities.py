@@ -74,15 +74,18 @@ from arcagent.modules.tasks._dispatch_helpers import (
     pick_agent as _pick_agent,
 )
 from arcagent.modules.tasks._dispatch_helpers import (
+    ready_order_key as _ready_order_key,
+)
+from arcagent.modules.tasks._dispatch_helpers import (
     resolve_timeout as _resolve_timeout,
 )
 from arcagent.modules.tasks._dispatch_helpers import (
     session_key as _session_key,
 )
+from arcagent.modules.tasks._intake import intake_run_id, intake_run_kwargs, settle_intake_run
 from arcagent.modules.tasks.models import (
     RUN_ENDED_UNFINISHED,
     SERVICE_RESTART_INTERRUPTED,
-    Priority,
     Task,
     reclaim_allowance_s,
 )
@@ -1098,9 +1101,6 @@ _DISPATCH_TICK = 15.0
 # is cheap; a short interval makes operator "stop" feel responsive.
 _RELIABILITY_TICK = 5.0
 
-# Highest-priority-first ordering (mirrors arcstore's claim order, SDD §2).
-_PRIORITY_RANK: dict[Priority, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-
 # Reasons the arcrun loop stamps on ``completion_payload.error`` when the loop
 # ITSELF halts a run — the SPEC-043 breakers (max_turns / max_cost / max_tokens /
 # runaway_loop / error_cascade, mirrored from
@@ -1149,16 +1149,21 @@ async def _dispatch_tick() -> None:
     ready = [t for t in todos if await _is_dispatchable(st, t, now)]
     if not ready:
         return
-    ready.sort(key=lambda t: (_PRIORITY_RANK.get(t.priority, 99), t.created_at or ""))
+    ready.sort(key=_ready_order_key)
     picked = ready[0]
     # Pin the run id up front and stamp it in the same atomic write that claims
     # the task, then hand the SAME id to the run so the loop's spooled events
     # share it — the arcui activity timeline joins task.run_id to those events.
     # A workflow node's claim also stamps its attempt key, and its run id is
     # DERIVED from that key, so a replayed dispatch of one attempt is one run.
+    # An intake row runs under the id the intake route already returned.
     node = node_from_task(picked)
     attempt_key = None if node is None else attempt_key_for(node, picked.attempts + 1)
-    run_id = str(uuid.uuid4()) if attempt_key is None else pinned_run_id(attempt_key)
+    run_id = (
+        pinned_run_id(attempt_key)
+        if attempt_key is not None
+        else intake_run_id(picked) or str(uuid.uuid4())
+    )
     started, _reason = await st.store.start_task(
         picked.id,
         self_did,
@@ -1232,7 +1237,7 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
         return
     await _announce_task_moment(st, task)
     timeout = _resolve_timeout(task, st.config)
-    run_kwargs: dict[str, Any] = {}
+    run_kwargs: dict[str, Any] = intake_run_kwargs(task)
     if node is not None:
         run_kwargs["allowed_strategies"] = allowed_strategies(node)
         if node.max_cost_usd is not None:
@@ -1279,6 +1284,7 @@ async def _run_task(st: _runtime._State, task: Task, run_id: str, self_did: str)
             # stuck-reclaim to guess. A script node transitions its own row.
             if not is_script:
                 await _settle_capped_run(st, task.id, self_did, result)
+                await settle_intake_run(st.store, task, result, self_did)
         finally:
             beat.cancel()
             await asyncio.gather(beat, return_exceptions=True)

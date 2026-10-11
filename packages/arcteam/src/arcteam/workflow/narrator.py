@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, Protocol
+from urllib.parse import quote
 
 from arcteam.types import Message, MsgType, Priority, parse_uri
 
@@ -29,16 +30,39 @@ GATE_VERBS: tuple[str, ...] = ("approve", "reject", "revise")
 """The reviewer's words on a gate card, in display order."""
 
 
-def gate_card_text(workflow_id: str, run_id: str, node_id: str, task_id: str) -> str:
-    """The approval card: what is waiting, and one ``/gate`` line per verb.
+def gate_card_text(
+    workflow_id: str,
+    run_id: str,
+    node_id: str,
+    task_id: str,
+    *,
+    kind: str = "gate",
+    escalated_to: str | None = None,
+) -> str:
+    """The card for a waiting human step.
 
-    The command lines ARE the card's contract — a platform with buttons turns
-    each into a button that sends exactly that line, so a button press and a
-    typed command take the same authorized path.
+    A gate card carries one ``/gate`` line per verb. Those command lines ARE the
+    card's contract: a platform with buttons turns each into a button that
+    sends exactly that line, so a button press and a typed command take the
+    same authorized path. A human_input card carries no verbs: the answer is a
+    form, so it points at the run's dashboard page instead (SPEC-088 COMP-008).
+    ``escalated_to`` heads the card when a passed deadline escalated the step.
     """
-    lines = [f"Workflow {workflow_id} (run {run_id}) is waiting on gate {node_id}."]
+    lines = []
+    if escalated_to is not None:
+        lines.append(f"Step {node_id} passed its deadline; escalated to {escalated_to}.")
+    if kind == "human_input":
+        lines.append(f"Workflow {workflow_id} (run {run_id}) is waiting for input at {node_id}.")
+        lines.append(f"Answer it in the dashboard: {run_page_path(workflow_id, run_id)}")
+        return "\n".join(lines)
+    lines.append(f"Workflow {workflow_id} (run {run_id}) is waiting on gate {node_id}.")
     lines += [f"/gate {task_id} {verb}" for verb in GATE_VERBS]
     return "\n".join(lines)
+
+
+def run_page_path(workflow_id: str, run_id: str) -> str:
+    """The dashboard path of one run's page (the host prefixes its public base URL)."""
+    return f"/workflows/{quote(workflow_id, safe='')}?run={quote(run_id, safe='')}"
 
 
 class RunNarrator:
@@ -103,12 +127,19 @@ class RunNarrator:
         )
 
     async def gate_waiting(
-        self, *, channel: str | None, run_id: str, node_id: str, task_id: str, workflow_id: str
+        self,
+        *,
+        channel: str | None,
+        run_id: str,
+        node_id: str,
+        task_id: str,
+        workflow_id: str,
+        kind: str = "gate",
     ) -> None:
-        """The approval card, on the run's channel: same text the operator gets."""
+        """The waiting card, on the run's channel: same text the operator gets."""
         await self._post(
             channel,
-            gate_card_text(workflow_id, run_id, node_id, task_id),
+            gate_card_text(workflow_id, run_id, node_id, task_id, kind=kind),
             run_id=run_id,
             event="gate.waiting",
             node_id=node_id,
@@ -212,4 +243,5 @@ __all__ = [
     "RunNarrator",
     "assert_channel_binding",
     "gate_card_text",
+    "run_page_path",
 ]

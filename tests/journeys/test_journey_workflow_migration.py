@@ -24,6 +24,7 @@ from arccli.commands.operator import load_operator_key, resolve_operator_signer
 from arccli.commands.workflow import workflow_handler
 from arcstore.backends.memory import FakeBackend
 from arcteam.workflow.runner import build_workflow_runner
+from arcteam.workflow.runner_contracts import TriggerContext
 from arctrust import default_operator_key_path, sign_artifact_with_signer
 from arctrust.paths import arc_state, workflows_dir
 from arcui.routes.workflows import OperatorActor
@@ -147,6 +148,7 @@ async def test_migrate_resign_brings_the_workflow_and_its_cron_back(
             input={},
             initiator="operator",
             initiator_did="did:arc:ui:operator",
+            trigger=TriggerContext("manual"),
         )
         started.append(str(run.run_id))
         return run

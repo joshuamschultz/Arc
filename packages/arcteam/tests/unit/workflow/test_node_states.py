@@ -19,6 +19,7 @@ from arcstore.runs import NodeState
 from arcstore.tasks import Task
 
 from arcteam.workflow.runner import NodeStateConflict
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     OPS_DID,
@@ -142,7 +143,12 @@ async def test_materialize_writes_node_state_with_task_id_and_started_at(
     _, runs, _ = stores
     runner = build(stores, registry, BRANCHY)
     run = await runner.start_run(
-        "branchy", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-m"
+        "branchy",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-m",
+        trigger=TriggerContext("manual"),
     )
     stored = await runs.get(run.run_id)
     state = stored.node_states["a"]
@@ -156,7 +162,12 @@ async def test_skip_route_and_fail_write_their_states(stores: Any, registry: Any
     _, runs, tasks = stores
     runner = build(stores, registry, BRANCHY)
     await runner.start_run(
-        "branchy", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-s"
+        "branchy",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-s",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(tasks, task_id("run-s", "a"), SALES_DID, {"go": "left"})
     await runner.advance("run-s")
@@ -182,7 +193,12 @@ async def test_finalize_copies_attempts_and_last_error_from_settled_rows(
     _, runs, tasks = stores
     runner = build(stores, registry, BRANCHY)
     await runner.start_run(
-        "branchy", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-f"
+        "branchy",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-f",
+        trigger=TriggerContext("manual"),
     )
     row_id = task_id("run-f", "a")
     # One failed attempt requeued, then a second attempt that succeeds.
@@ -218,7 +234,12 @@ async def test_set_node_states_conflict_rereads_and_retries_then_raises(
 
     runs.set_node_states = flaky  # type: ignore[method-assign]
     await runner.start_run(
-        "branchy", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-c"
+        "branchy",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-c",
+        trigger=TriggerContext("manual"),
     )
     assert len(calls) >= 3, "two conflicts must be re-read and retried, not dropped"
     assert (await runs.get("run-c")).node_states["a"].status == "materialized"
@@ -238,7 +259,12 @@ async def test_node_states_equal_derived_state_after_every_tick(
     runner = build(stores, registry, BRANCHY)
     run_id = f"run-p{seed}"
     await runner.start_run(
-        "branchy", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id=run_id
+        "branchy",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id=run_id,
+        trigger=TriggerContext("manual"),
     )
     await _assert_snapshot_matches(stores, run_id)
     for _ in range(20):
@@ -268,7 +294,12 @@ async def test_reconcile_repairs_divergent_snapshot(stores: Any, registry: Any) 
     _, runs, tasks = stores
     runner = build(stores, registry, BRANCHY)
     await runner.start_run(
-        "branchy", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-r"
+        "branchy",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-r",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(tasks, task_id("run-r", "a"), SALES_DID, {"go": "left"})
     await runner.advance("run-r")

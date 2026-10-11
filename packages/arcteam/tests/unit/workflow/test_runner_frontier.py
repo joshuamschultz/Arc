@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from arcteam.workflow.runner import UnsignedWorkflowRefusedError, WorkflowRunner
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     OPS_DID,
@@ -121,6 +122,7 @@ async def test_only_reachable_nodes_materialize(stores: Any, registry: Any) -> N
         input={},
         initiator="operator",
         initiator_did="did:arc:local:user/9999",
+        trigger=TriggerContext("manual"),
     )
 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
@@ -133,7 +135,11 @@ async def test_untaken_branch_never_becomes_a_task_row(stores: Any, registry: An
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -165,7 +171,11 @@ async def test_router_choice_is_recorded_in_the_path_taken(stores: Any, registry
     _, runs, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -199,7 +209,11 @@ async def test_gate_node_materializes_as_a_review_task(stores: Any, registry: An
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -219,7 +233,11 @@ async def test_tool_node_args_resolve_by_value_from_upstream_output(
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -255,7 +273,11 @@ async def test_llm_router_records_only_a_declared_choice(stores: Any, registry: 
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "triage", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "triage",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     rows = await flow_tasks.query_by_flow_run(run.run_id)
@@ -295,7 +317,11 @@ async def test_llm_router_invalid_output_fails_node_with_reason_after_one_repair
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, _triage())
     run = await runner.start_run(
-        "triage", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "triage",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "sideways"})
@@ -325,7 +351,11 @@ async def test_llm_router_repair_that_names_a_declared_route_is_followed(
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, _triage())
     run = await runner.start_run(
-        "triage", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "triage",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "pick", 0), SALES_DID, {"route": "sideways"})
@@ -358,7 +388,11 @@ async def test_failed_node_finalizes_the_run_instead_of_hanging(
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     # The dispatch settler's terminal for a budget-capped node.
@@ -396,7 +430,11 @@ async def test_predecessor_completing_mid_tick_does_not_falsely_stall_the_run(
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "chain", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "chain",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     # `first` is materialized and in flight; `second` waits on it, so it is not yet
@@ -445,7 +483,12 @@ async def test_two_runs_can_never_derive_the_same_task_row(stores: Any, registry
     flow_tasks, _, _ = stores
 
     first = await build(stores, registry, definition).start_run(
-        "collide", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-alpha"
+        "collide",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-alpha",
+        trigger=TriggerContext("manual"),
     )
     second = await build(stores, registry, other).start_run(
         "collide",
@@ -453,6 +496,7 @@ async def test_two_runs_can_never_derive_the_same_task_row(stores: Any, registry
         initiator="operator",
         initiator_did="did:arc:x/1",
         run_id="run-alpha-review",
+        trigger=TriggerContext("manual"),
     )
 
     left = await flow_tasks.query_by_flow_run(first.run_id)
@@ -474,6 +518,7 @@ async def test_a_workflow_id_shaped_like_a_path_never_reaches_the_store(
             input={},
             initiator="operator",
             initiator_did="did:arc:x/1",
+            trigger=TriggerContext("manual"),
         )
 
     assert definitions.dispatch_calls == 0
@@ -489,7 +534,11 @@ async def test_a_node_id_shaped_like_a_path_is_refused(stores: Any, registry: An
     runner = build(stores, registry, definition)
 
     record = await runner.start_run(
-        "traversal", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "traversal",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     assert record.status == "failed"
@@ -509,6 +558,7 @@ async def test_a_caller_supplied_run_id_is_checked_before_anything_is_written(
             initiator="operator",
             initiator_did="did:arc:x/1",
             run_id="../../../escape",
+            trigger=TriggerContext("manual"),
         )
 
     _, runs, _ = stores
@@ -534,7 +584,11 @@ async def test_an_artifact_that_escapes_the_workspace_fails_the_node_closed(
     runner = build(stores, registry, definition)
 
     record = await runner.start_run(
-        "artifacts", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "artifacts",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     assert record.status == "failed"
@@ -553,7 +607,11 @@ async def test_a_definition_edited_mid_run_stops_the_run(stores: Any, registry: 
     definitions = FakeDefinitions(Bundle(onboarding()))
     runner = build(stores, registry, onboarding(), definitions=definitions)
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -579,7 +637,11 @@ async def test_a_run_waiting_on_a_human_gate_says_so(stores: Any, registry: Any)
     _, runs, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -624,7 +686,11 @@ async def test_a_node_that_would_need_interpolation_fails_closed(
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -668,7 +734,11 @@ async def test_an_embedded_run_input_is_refused_too(stores: Any, registry: Any) 
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "wired", input={"customer": "acme"}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={"customer": "acme"},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"ok": True})
@@ -687,7 +757,11 @@ async def test_a_router_whose_predicate_cannot_be_evaluated_fails_closed(
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -722,7 +796,11 @@ async def test_when_false_skips_the_node_and_the_run_completes(stores: Any, regi
     flow_tasks, runs, tasks = stores
     runner = build(stores, registry, definition)
     run = await runner.start_run(
-        "qa-loop", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "qa-loop",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "draft", 0), OPS_DID, {"draft": "x"})
@@ -744,7 +822,11 @@ async def test_queries_are_scoped_by_run_not_list_then_filter(stores: Any, regis
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, onboarding())
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(
         tasks, task_id(run.run_id, "collect", 0), SALES_DID, {"company_domain": "a.io"}
@@ -761,7 +843,11 @@ async def test_tier_is_taken_at_construction_and_stamped_on_every_audit_event(
     sink = RecordingSink()
     runner = build(stores, registry, onboarding(), tier="federal", audit_sink=sink)
     await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     assert sink.events, "starting a run is an audited operation"
@@ -794,7 +880,11 @@ async def test_unsigned_definition_is_refused_above_personal_tier(
 
     with pytest.raises(UnsignedWorkflowRefusedError):
         await runner.start_run(
-            "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+            "customer-onboarding",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:x/1",
+            trigger=TriggerContext("manual"),
         )
 
 
@@ -814,7 +904,11 @@ async def test_trust_is_read_from_the_signature_not_the_lifecycle_status(
     )
 
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     assert run.status == "running"
@@ -828,7 +922,11 @@ async def test_archiving_a_workflow_does_not_break_its_live_runs(
     definitions = FakeDefinitions(Bundle(onboarding()))
     runner = build(stores, registry, onboarding(), definitions=definitions)
     run = await runner.start_run(
-        "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "customer-onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     definitions.archived = True  # an operator archives it mid-run
@@ -844,5 +942,9 @@ async def test_archiving_a_workflow_does_not_break_its_live_runs(
 
     with pytest.raises(ArchivedError):
         await runner.start_run(
-            "customer-onboarding", input={}, initiator="operator", initiator_did="did:arc:x/1"
+            "customer-onboarding",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:x/1",
+            trigger=TriggerContext("manual"),
         )
