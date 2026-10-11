@@ -279,9 +279,11 @@ function VerificationNote({
       <p className="text-[11px] leading-relaxed text-muted-foreground">
         {state.state === 'broken'
           ? `Chain broken at seq ${state.seq ?? 'unknown'}: a record after this point does not match its signature or hash.`
-          : signStateSentence(signed, verified)}
+          : state.state === 'cleared'
+            ? `Cleared: a re-verify walked the chain past seq ${state.seq ?? 'unknown'} and every record verified. This break was reported in error.`
+            : signStateSentence(signed, verified)}
       </p>
-      {operatorMode && state.state !== 'verified' && (
+      {operatorMode && state.state !== 'verified' && state.state !== 'cleared' && (
         <div className="flex items-center gap-2">
           <Button
             type="button"
