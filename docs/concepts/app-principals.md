@@ -67,7 +67,10 @@ Config lives in `[ui.principals]`:
 require_signed_requests = false   # enterprise only; federal forces true
 require_named_decider   = false   # enterprise; federal forces true; ignored at personal
 rate_per_minute         = 600     # per principal
+pre_auth_rate_per_minute = 1200   # per client address, checked before the credential
 ```
+
+Before Arc checks an app credential, it limits each client address to `pre_auth_rate_per_minute` and caps the body at 128 KiB. The address is the network peer. Arc does not read `X-Forwarded-For`. Behind a reverse proxy, all apps share the proxy's limit.
 
 The tier itself comes from your security tier setting. This table cannot loosen it.
 

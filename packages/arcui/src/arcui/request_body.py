@@ -17,6 +17,10 @@ async def read_capped_body(request: Request, cap: int) -> bytes | None:
     The declared ``Content-Length`` is checked first, then the stream itself is
     counted as it arrives, so a lying or absent ``Content-Length`` cannot slip
     a larger body past the cap. Nothing past the cap is buffered.
+
+    A body within the cap is cached on the request the way ``Request.body()``
+    caches it, so a later ``body()``/``json()`` (and, under
+    ``BaseHTTPMiddleware``, the downstream route) reads the same bytes.
     """
     declared = request.headers.get("content-length", "")
     if declared.isdigit() and int(declared) > cap:
@@ -26,7 +30,11 @@ async def read_capped_body(request: Request, cap: int) -> bytes | None:
         received += chunk
         if len(received) > cap:
             return None
-    return bytes(received)
+    body = bytes(received)
+    # Starlette's own cache slot: Request.body/stream and BaseHTTPMiddleware's
+    # downstream receive both replay ``_body`` once it is set.
+    request._body = body
+    return body
 
 
 __all__ = ["read_capped_body"]

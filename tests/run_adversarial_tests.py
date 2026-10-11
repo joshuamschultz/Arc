@@ -957,6 +957,7 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # allowlist record; an app on the allowlist routes; a callback with no signer (503).
     "work intake, events and callbacks (SPEC-088)": (
         "packages/arcui/tests/security/test_work_intake_abuse.py",
+        "packages/arcui/tests/security/test_principal_pre_auth_abuse.py",
         "packages/arcteam/tests/security/test_workflow_event_abuse.py",
         "packages/arcui/tests/security/test_callback_ssrf.py",
         "packages/arcui/tests/test_callback_policy.py",

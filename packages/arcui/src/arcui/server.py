@@ -979,6 +979,10 @@ def create_app(
     app.state.principal_rate_limiter = PrincipalRateLimiter(
         app.state.principals_config.rate_per_minute
     )
+    # SPEC-088: per client address, before any authority load or audit write.
+    app.state.principal_pre_auth_limiter = PrincipalRateLimiter(
+        app.state.principals_config.pre_auth_rate_per_minute
+    )
     app.state.principal_replay_cache = new_replay_cache()
     # SPEC-088 COMP-011: per (principal, workflow) event rate.
     app.state.workflow_event_limiter = PrincipalRateLimiter(workflows_routes.EVENT_RATE_PER_MINUTE)
