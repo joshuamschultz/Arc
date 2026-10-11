@@ -19,7 +19,7 @@ def test_base_trust_imports_when_hosted_files_are_absent(tmp_path: Path) -> None
     (target / "hosted_rekey.py").unlink()
     env = {**os.environ, "PYTHONPATH": str(tmp_path)}
     run = subprocess.run(  # noqa: S603  -- fixed interpreter and script, no shell
-        [sys.executable, "-c", "import arctrust; assert arctrust.__version__ == '0.12.0'"],
+        [sys.executable, "-c", "import arctrust; assert arctrust.__version__ == '0.13.0'"],
         cwd=tmp_path,
         env=env,
         capture_output=True,

@@ -184,6 +184,8 @@ arc agent run my-agent "Analyze this" --context ./report.md --json
 |---|---|
 | **`arc approve`** | Mechanical operator approval for blocked agent actions (SPEC-035) — list, `<id>`, `--deny` |
 | **`arc trust`** | Operator approval for gated capabilities — list, approve, disapprove |
+| **`arc principal`** | App principals that call the ArcUI API — issue, list, show, revoke. See the [app principals runbook](../../docs/runbooks/operate/app-principals.md) |
+| **`arc callback`** | Origins work-event callbacks may be sent to — add, list, remove. `arc callback key` mints the work-events key (run once on existing installs) |
 | **`arc stop`** | Operator kill switch — stop a running agent run by run id or session |
 | **`arc user`** | Accounts that can sign in — add, list, passwd, role, telegram |
 | **`arc gateway pair`** | Gateway pairing operator commands — list, approve, revoke |

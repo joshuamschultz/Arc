@@ -44,11 +44,13 @@ What makes `arcteam` uniquely powerful for multi-agent coordination:
 
 ### **Workflow Orchestration**
 - **ArcFlow workflows (SPEC-061)** — Named, signed, deterministic DAGs for complex multi-agent tasks; agents can author and run workflows on demand
-- **Gate resolution** — Workflow nodes can require operator approval or other conditions before proceeding
+- **Gate resolution** — Workflow nodes can require operator approval or other conditions before proceeding; gates accept typed payloads, a `human_input` node takes typed data from a person, and gates can escalate on timeout (`escalate_to`)
+- **Event triggers**: A workflow `[[event]]` starts a run when a named event is posted; repeated events dedupe to one run. See the [work intake API reference](../../docs/reference/work-intake-api.md)
 - **Run history** — Full history of every workflow execution with signed audit trails
 
 ### **Security & Audit**
 - **Operator-signed audit chain** — Every operation signed with operator key, not agent's own DID; prevents agents from forging their own trails
+- **Recorded attribution**: Signed agent mail and workflow gate decisions record who acted
 - **Per-entity DIDs** — Each agent and human has unique identity; no shared credentials to compromise
 - **Pluggable storage** — NATS JetStream for production, in-memory for tests; same interface, different backends
 

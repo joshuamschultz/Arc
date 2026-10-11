@@ -90,7 +90,7 @@ Paths (``arctrust.paths`` — the ONE resolver; never compose your own):
     activate_runtime    — atomic ``current`` symlink flip (update / rollback)
 """
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
 
 from typing import TYPE_CHECKING, Any
 

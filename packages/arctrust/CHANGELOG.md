@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-11
+
+### Added
+- App principals with scopes, and on-behalf-of attribution for requests an app
+  makes for a person.
+- Federal signed app request headers (`X-Arc`), with a `ReplayCache`. It refuses
+  timestamps beyond 30 s clock skew and any repeated `X-Arc` header.
+- Callback allowlist (sealed record) and a work-events signer.
+
+### Breaking
+- The fixed operator DID constants are removed. Operator identity is resolved
+  from sealed authority state. Code that imported those constants must use the
+  operator resolver.
+
 ## [0.12.0] - 2026-08-23
 
 ### Scenario grants — standing approval for unattended automation

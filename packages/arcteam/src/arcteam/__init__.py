@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 from arcteam.audit import AuditLogger
 from arcteam.composition import is_fleet_transport_error

@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-11
+
+Release for app principals, work intake and work events, and an audit
+reverify fix.
+
+### Identity and access
+- Apps now get their own principal identity with scopes. Apps no longer
+  share the operator token.
+- Requests record the acting identity. When an app acts for a person, the
+  request also records that person as "on behalf of".
+- Federal tier requires signed app requests. Replayed requests are refused.
+- New `arc principal` CLI and an Apps page in the dashboard manage app
+  principals.
+- The federal two-person rule compares person to person.
+- Signed agent mail and workflow gate decisions record who acted.
+
+### Work intake and events
+- `POST /api/runs` starts an agent run. Requests send an `Idempotency-Key`.
+  Reads of runs are scoped to the caller.
+- `POST /api/team/tasks` accepts more intake fields. It can create a task only
+  if absent, and it checks links.
+- A workflow `[[event]]` trigger starts a run when a named event is posted.
+  Repeated events dedupe to one run.
+- Gates accept a payload. A new `human_input` node takes typed data that is
+  checked against the node `output_schema`.
+- Gates can time out and escalate with `escalate_to`.
+- The work-events stream (SSE) and signed callbacks come from one durable
+  work event log.
+- Callbacks go only to allowlisted origins. They are signed with a dedicated
+  work-events key, not the operator key.
+- New `arc callback` CLI mints the work-events key and manages the allowlist.
+- Pre-auth request throttle and body caps protect the API.
+- ArcStore migration v15 adds the work event tables. It runs at startup.
+
+### Fixed
+- Audit reverify no longer writes false `audit.chain.broken` markers on a busy
+  box.
+- Reverify marks a break marker that it proves false as `cleared`. The row is
+  kept.
+
+### Breaking changes
+- The fixed operator DID constants are removed. Use the operator resolver.
+- The gate route body is now `{"decision", "notes", "payload"}`. An invalid
+  payload returns 422 (was 400).
+- `arc init` now mints the work-events key. Existing installs run
+  `arc callback key` once (the deploy script does this) and restart arc.
+
 ## [0.5.0] - 2026-08-30
 
 Alpha hardening release: ~50 dashboard/observability fixes plus six feature

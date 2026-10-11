@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-11
+
+### Added
+- Schema migration v15 adds the `work_events` and `work_event_deliveries` tables.
+  It applies automatically at startup.
+- Work-events stream and signed callbacks are fed from one durable work event
+  log.
+- Richer task intake fields, with create-if-absent and link validation.
+
+### Changed
+- App-initiated audit rows count as control actions.
+
+### Fixed
+- Audit reverify no longer writes false `audit.chain.broken` markers on a busy
+  box. Each audit file cursor now moves to the offset the walk reached, so
+  writers that append during a long reverify no longer cause a sequence mismatch.
+- Reverify marks a stored break marker that its walk proves false with the outcome
+  `cleared`, with `cleared_at` and `cleared_by`. The row is kept, never deleted.
+  Markers at or after a real break stay. The broken count counts only uncleared
+  markers.
+
 ## [0.5.0] - 2026-08-23
 
 - Connected-source state is now source-queryable and safe under concurrent

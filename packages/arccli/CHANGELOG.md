@@ -17,6 +17,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent identity; the CLI cannot impersonate another agent or use the operator
   signer as a sender.
 
+## [0.10.0] - 2026-10-11
+
+### Added
+- `arc principal` CLI to issue and manage app principals.
+- `arc callback` CLI. `arc callback key` mints the work-events key (idempotent).
+  Other commands manage the callback allowlist.
+
+### Changed
+- `arc init` mints the work-events key.
+
+### Breaking
+- Existing installs run `arc callback key` once (the deploy script does this) and
+  restart arc so the callback dispatcher starts.
+
 ## [0.9.0] - 2026-08-22
 
 - Native streamed agent output and reliable attached/headless ArcFlow commands.

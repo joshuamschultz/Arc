@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-11
+
+### Added
+- Apps page in the dashboard to issue and manage app principals.
+- `POST /api/runs` starts an agent run with an `Idempotency-Key`. Reads of runs
+  are scoped to the caller.
+- Richer `POST /api/team/tasks` intake fields, with create-if-absent and link
+  validation.
+- Workflow event triggers. A posted event starts a run. The limit is 60 events a
+  minute per principal and workflow (429). The body is capped at 64 KiB (413).
+- Gate payloads and a `human_input` node kind. Gate timeouts escalate with
+  `escalate_to`.
+- Work-events stream (SSE) and signed callbacks. Callbacks go only to allowlisted
+  origins and are SSRF-checked. At most 4 open streams per principal (429).
+- Pre-auth per-client throttle (default 1200 requests a minute, else 429) and a
+  request body cap checked before parsing (413).
+
+### Changed
+- App requests record the acting identity and, when an app acts for a person,
+  the person it acts for.
+- Federal app requests must be signed. Replay protection refuses stale
+  timestamps beyond 30 s clock skew and any repeated `X-Arc` header.
+- The federal two-person rule compares person to person.
+- Always-allow approvals record the person who decided. Voice card actions record
+  the acting identity.
+- The Security screen ledger shows a cleared break marker as cleared.
+
+### Breaking
+- The gate route `POST /api/workflow-tasks/{id}/gate` takes
+  `{"decision", "notes", "payload"}`. The whole body is capped at 128 KiB and
+  `payload` is at most 64 KiB (413). An invalid payload returns 422 with one
+  issue per field (was 400).
+
 ## [0.6.0] - 2026-08-23
 
 - Knowledge distinguishes an unavailable connected-data runtime from a

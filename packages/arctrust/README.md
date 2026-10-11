@@ -21,7 +21,7 @@
 
 It gives you the four pillars every secure agent needs (ADR-019):
 
-- 🪪 **Identity** — Ed25519 keypairs and DIDs (`did:arc:{org}:{type}/{hash}`), plus human user identities and the operator audit key
+- 🪪 **Identity** — Ed25519 keypairs and DIDs (`did:arc:{org}:{type}/{hash}`), plus human user identities, app principals with scopes, and the operator audit key
 - ✍️ **Sign** — sign and verify arbitrary bytes and artifacts through one `Signer` seam (in-process or vault/HSM custody)
 - ✅ **Authorize** — a deny-by-default, fail-closed `PolicyPipeline` that decides whether a tool call is allowed
 - 📜 **Audit** — structured events written to a durable, hash-chained, tamper-evident WORM sink

@@ -45,7 +45,8 @@ What makes `arcui` the definitive real-time agent observability dashboard:
 ### **Operator Controls**
 - **Two-token role separation** — Viewer token (read-only) and operator token (mutations); prevents unauthorized config changes
 - **In-place mutations** — Edit config, tasks, channels, files, and prompts directly from the dashboard; all changes audited
-- **HITL approvals** — Approve gated tool calls and skill installations from the UI; full context provided
+- **HITL approvals** — Approve gated tool calls and skill installations from the UI; full context provided. Always-allow approvals record the person who decided
+- **Work intake and events**: `POST /api/runs` with an `Idempotency-Key`, workflow `[[event]]` triggers, gate payloads with `human_input`, and signed callbacks plus an SSE work-events stream. See the [work intake API reference](../../docs/reference/work-intake-api.md)
 - **Durable Agent Inbox** — Operator-only thread search, read receipts, replies, and handoff create/resolve controls over ArcTeam mail; gateway sessions are not projected here
 - **Connected knowledge operations** — select source resources and mapping
   destinations, approve mappings, sync/pause/resume/reindex/revoke, search
@@ -171,6 +172,8 @@ arc ui start \
 ```
 
 > ⚠️ `arc ui tail` requires `--viewer-token` explicitly.
+
+**App principals.** Other systems sign in as their own principal with scopes, not with the operator token. Requests record the acting identity, and an app acting for a person records that person as "on behalf of". Federal-tier app requests must be signed. Operators issue principals on the Apps page or with `arc principal`. See the [app principals concept](../../docs/concepts/app-principals.md) and the [operator runbook](../../docs/runbooks/operate/app-principals.md).
 
 Agents don't push events into the dashboard over a token-authenticated channel at all (SPEC-026 FR-5): `arcui` is a pure **reader** of the durable record. It runs `StoreIngest` over the shared `arcstore` spool + WORM files (everything `arcllm`/`arcrun`/`arcagent` already wrote, whether or not `arcui` was running) into the shared PostgreSQL operational store, then serves read-on-demand REST from that store. There is no live push wire, so there's nothing for a compromised or crashed agent to leave dangling.
 

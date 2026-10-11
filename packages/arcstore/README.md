@@ -109,6 +109,11 @@ over their lifetime rather than being appended once. Backend methods:
 Every `mutable_*` write emits an AU-2/AU-3 audit event, fail-open (AU-5) so a sink
 outage can't block a durable write.
 
+Audit reverify moves each file cursor to the offset its walk reached, so writers that
+append during a long reverify do not cause false chain breaks. A stored break marker that
+a later walk proves false is kept with outcome `cleared` (with `cleared_at` and `cleared_by`),
+never deleted. The broken count counts only uncleared markers.
+
 ---
 
 ## ✅ The `tasks` Directory (`arcstore.tasks`)

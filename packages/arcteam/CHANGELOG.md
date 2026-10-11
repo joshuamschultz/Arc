@@ -24,6 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   consume the same authorized service. Gateway operator/external sessions stay
   on their own plane and are never projected into AgentMail.
 
+## [0.9.0] - 2026-10-11
+
+### Added
+- Workflow `[[event]]` triggers. A named event starts a workflow run. A
+  deterministic run id dedupes repeated events.
+- Gate payloads and a `human_input` node kind. A person submits typed data that
+  is checked against the node `output_schema`.
+- Gate timeouts with escalation (`escalate_to`).
+
+### Changed
+- Signed agent mail and workflow gate decisions record who acted.
+
 ## [0.8.0] - 2026-08-22
 
 - ArcFlow headless service, attached CLI completion, durable runner leases,
