@@ -118,7 +118,13 @@ class FakeGatePlane:
         self.result = ControlPlaneResult(value={"task_id": "t-1", "status": "done"})
 
     async def resolve_gate(
-        self, task_id: str, *, decision: str, notes: str, actor: OperatorActor
+        self,
+        task_id: str,
+        *,
+        decision: str,
+        notes: str,
+        actor: OperatorActor,
+        payload: dict[str, Any] | None = None,
     ) -> ControlPlaneResult:
         self.calls.append((task_id, decision, notes, actor))
         return self.result

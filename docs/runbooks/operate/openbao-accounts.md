@@ -82,6 +82,11 @@ path "@NS@-anchor/metadata/principals" { capabilities = ["read"] }
 path "@NS@-anchor/delete/principals"   { capabilities = ["deny"] }
 path "@NS@-anchor/destroy/principals"  { capabilities = ["deny"] }
 path "@NS@-anchor/undelete/principals" { capabilities = ["deny"] }
+path "@NS@-anchor/data/callbacks"      { capabilities = ["create", "read", "update"] }
+path "@NS@-anchor/metadata/callbacks"  { capabilities = ["read"] }
+path "@NS@-anchor/delete/callbacks"    { capabilities = ["deny"] }
+path "@NS@-anchor/destroy/callbacks"   { capabilities = ["deny"] }
+path "@NS@-anchor/undelete/callbacks"  { capabilities = ["deny"] }
 path "@NS@-anchor/config"              { capabilities = ["read"] }
 
 path "auth/token/lookup-self" { capabilities = ["read"] }
@@ -108,6 +113,7 @@ path "@NS@-anchor/data/config"         { capabilities = ["create", "read", "upda
 path "@NS@-anchor/metadata/config"     { capabilities = ["read"] }
 path "@NS@-anchor/metadata/users"      { capabilities = ["read"] }
 path "@NS@-anchor/metadata/principals" { capabilities = ["read"] }
+path "@NS@-anchor/metadata/callbacks"  { capabilities = ["read"] }
 path "@NS@-anchor/config"              { capabilities = ["read"] }
 path "@NS@-anchor/delete/config"       { capabilities = ["deny"] }
 path "@NS@-anchor/destroy/config"      { capabilities = ["deny"] }
@@ -155,12 +161,13 @@ It signs the config (revision 1) and three 365-day grants with the operator key,
 writes the config head to `<ns>-anchor/config` with CAS, writes
 `~/arc/config/accounts-authority.json` and `~/arc/config/accounts-grants.json`
 (both 0600), and prints the `[security.accounts]` block. Every step is appended
-to the operator audit chain. For each of the `users` and `principals` records
-that does not exist yet it also leaves a single-use marker,
-`~/arc/config/users-bootstrap.once` or `~/arc/config/principals-bootstrap.once`,
-which Arc consumes to create that record. An existing deployment that enrolled
-before app principals existed must update `anchor.hcl` and `enroll.hcl`, then
-run `arc accounts enroll --rotate` once to get the `principals` marker.
+to the operator audit chain. For each of the `users`, `principals` and
+`callbacks` records that does not exist yet it also leaves a single-use marker,
+`~/arc/config/<record>-bootstrap.once` (for example
+`~/arc/config/callbacks-bootstrap.once`), which Arc consumes to create that
+record. An existing deployment that enrolled before app principals or the
+callback allowlist existed must update `anchor.hcl` and `enroll.hcl`, then run
+`arc accounts enroll --rotate` once to get the missing markers.
 
 Options: `--grant-days N` (default 365), `--rotate` (next revision: use it to
 renew grants or move the Vault URL), `--authority-config PATH`, `--grants-file

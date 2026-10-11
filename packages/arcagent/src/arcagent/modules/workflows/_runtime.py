@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -90,6 +91,10 @@ class _State:
     # dies at its first node with "unknown agent" — the roster is what turns
     # that into a repairable authoring error (REQ-219).
     known_agents: frozenset[str] = frozenset()
+    # Human user DID -> the roles they hold: who a gate may escalate to
+    # (REQ-622). None until a roster is read: the validator then defers the
+    # check to run start rather than treat "no roster" as "nobody".
+    known_users: Mapping[str, frozenset[str]] | None = None
     # arcteam ``EntityRegistry``, built lazily over the shared bus. None means
     # no roster is available, and the check is skipped rather than guessed.
     registry: Any = None
@@ -239,11 +244,13 @@ async def refresh_roster(nats_url: str = "") -> None:
                 operator_signer=st.operator_signer,
             )
         members = await st.registry.list_agents()
+        users = await st.registry.list_users()
     except Exception:  # reason: no roster is a skipped check, never a failure
         _logger.debug("workflow roster unavailable; agent references go unchecked", exc_info=True)
         return
     handles = {f"@{member.handle}" for member in members if getattr(member, "handle", "")}
     st.known_agents = frozenset(handles)
+    st.known_users = dict(users)
 
 
 def set_runner(runner: Any) -> None:
@@ -354,6 +361,7 @@ def _build_control_plane(st: _State, runs: Any) -> None:
         operator_public_key=_operator_public_key(st),
         audit=st.audit_hook,
         known_agents=lambda: st.known_agents,
+        known_users=lambda: st.known_users,
         runner=st.runner if st.runner is not None else _NoRunner(),
         runs=runs,
     )

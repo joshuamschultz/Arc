@@ -128,6 +128,7 @@ def team() -> Registry:
     return Registry(
         {"sales": SALES_DID},
         roles={ALICE: ("planner",), BOB: ("planner",), CAROL: ("supervisor",)},
+        users=frozenset({ALICE, BOB, CAROL, MALLORY}),
     )
 
 

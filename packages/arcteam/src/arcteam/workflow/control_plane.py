@@ -181,6 +181,9 @@ class ControlPlaneResult:
     errors: tuple[ValidationIssueLike | OperationIssue, ...] = ()
     bundle: BundleSpec | None = None
     run: RunRecord | None = None
+    #: True when a pinned run id named a run that already existed: the start
+    #: was a replay, so a surface answers "already done", not "created".
+    replayed: bool = False
 
 
 @dataclass
@@ -467,7 +470,7 @@ class WorkflowControlPlane:
             ),
             actor_did,
         )
-        return ControlPlaneResult(ok=True, run=record)
+        return ControlPlaneResult(ok=True, run=record, replayed=not created)
 
     async def fire_event(
         self,

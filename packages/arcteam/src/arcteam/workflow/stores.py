@@ -631,9 +631,39 @@ class RegistryOwnerResolver:
             return frozenset()
         return frozenset(entity.roles)
 
+    async def is_user(self, did: str) -> bool:
+        """True only for an ACTIVE ``user`` entity registered under exactly ``did``.
+
+        An escalation target must be a person: an agent, a stranger, a handle
+        or a suspended member is refused, so no model can approve its own run.
+        """
+        if not did.startswith("did:"):
+            return False
+        entity = await self._registry.get(did)
+        if entity is None or str(entity.did) != did or not _is_active(entity):
+            return False
+        return _is_user(entity)
+
+    async def user_roles(self) -> frozenset[str]:
+        """Every role an ACTIVE human user holds — what an escalation may name.
+
+        A role only an agent holds is excluded: escalating to it would hand a
+        human decision to a model (REQ-622, ASI09).
+        """
+        return frozenset(
+            role
+            for entity in await self._registry.list_entities()
+            if _is_active(entity) and _is_user(entity)
+            for role in entity.roles
+        )
+
 
 def _is_active(entity: Any) -> bool:
     return str(getattr(entity.status, "value", entity.status)) == "active"
+
+
+def _is_user(entity: Any) -> bool:
+    return str(getattr(entity.type, "value", entity.type)) == "user"
 
 
 async def build_team_bindings(

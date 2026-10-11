@@ -14,7 +14,7 @@ orchestration.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from arcteam.audit import AuditLogger
 from arcteam.composition import make_backend, message_signer
@@ -25,7 +25,10 @@ from arcteam.harness.enrollment import (
 )
 from arcteam.messenger import MessagingService
 from arcteam.registry import EntityRegistry, resolve
-from arcteam.types import Entity, Message, MsgType
+from arcteam.types import Entity, EntityStatus, EntityType, Message, MsgType
+
+if TYPE_CHECKING:
+    from arcteam.workflow.validator import KnownReferences
 
 # The agent asks for three notice kinds; the bus carries many. Mapping them here
 # keeps the richer taxonomy out of the agent, which has no use for it.
@@ -71,6 +74,19 @@ class FleetDirectoryAdapter:
             if is_eligible(entity, resolve_operator_key=self._resolve_operator_key)
         )
 
+    async def list_users(self) -> dict[str, frozenset[str]]:
+        """Each active human user's DID and roles — the only legal escalation targets.
+
+        A workflow may hand a timed-out decision only to a person, or to a role a
+        person holds (REQ-622). The filter lives here, beside the agent filter,
+        so the agent never reads membership state to build it.
+        """
+        return {
+            entity.did: frozenset(entity.roles)
+            for entity in await self._registry.list_entities()
+            if entity.type == EntityType.USER and entity.status == EntityStatus.active
+        }
+
 
 class FleetMessengerAdapter:
     """``arcagent.fleet.FleetMessenger`` over the messaging service."""
@@ -88,6 +104,25 @@ class FleetMessengerAdapter:
                 classification=notice.classification,
             )
         )
+
+
+def _known_references(
+    agents: frozenset[str], users: Mapping[str, frozenset[str]] | None
+) -> KnownReferences:
+    """The authoring roster: agents, plus the human users and the roles they hold.
+
+    ``users=None`` means no roster was read, so both user kinds stay unknown and
+    run start — which always asks the live registry — is the check.
+    """
+    from arcteam.workflow.validator import KnownReferences
+
+    if users is None:
+        return KnownReferences(agents=agents)
+    return KnownReferences(
+        agents=agents,
+        users=frozenset(users),
+        user_roles=frozenset(role for roles in users.values() for role in roles),
+    )
 
 
 class ArcTeamFleet:
@@ -130,6 +165,7 @@ class ArcTeamFleet:
         operator_public_key: bytes | None,
         audit: Any,
         known_agents: Any,
+        known_users: Any,
         runner: Any,
         runs: Any,
     ) -> tuple[Any, Any] | None:
@@ -151,7 +187,6 @@ class ArcTeamFleet:
                 validate_definition,
             )
             from arcteam.workflow.control_plane import WorkflowControlPlane
-            from arcteam.workflow.validator import KnownReferences
         except ImportError:
             return None
 
@@ -169,7 +204,7 @@ class ArcTeamFleet:
             return validate_definition(
                 definition,
                 # Read now, not captured: the roster changes while an agent runs.
-                known=KnownReferences(agents=known_agents()),
+                known=_known_references(known_agents(), known_users()),
                 # THE definition's own bundle, not the directory that holds every
                 # bundle. One level too high made every file reference read as
                 # missing, so an edit that added no files was rejected for

@@ -340,3 +340,34 @@ class TestWorkEventDeliveries:
         claimed = await log.claim_deliveries(f"c-{uuid.uuid4().hex}", 2)
 
         assert len(claimed) == 2
+
+
+class TestWorkEventLogGet:
+    """The callback dispatcher loads the event a claimed delivery points at."""
+
+    async def test_get_returns_the_stored_event_with_seq_and_callback(
+        self, backend: ArcStoreBackend, clock: _Clock
+    ) -> None:
+        log = _log(backend, clock)
+        event = _event(_run(), callback_url=_CALLBACK, status="done")
+        await log.append(event)
+        (delivery,) = [
+            d
+            for d in await log.claim_deliveries(f"c-{uuid.uuid4().hex}", 100)
+            if d.event_id == event.event_id
+        ]
+
+        loaded = await log.get(delivery.event_id)
+
+        assert loaded is not None
+        assert loaded.event_id == event.event_id
+        assert loaded.callback_url == _CALLBACK
+        assert loaded.status == "done"
+        assert isinstance(loaded.seq, int)
+
+    async def test_get_unknown_event_id_is_none(
+        self, backend: ArcStoreBackend, clock: _Clock
+    ) -> None:
+        log = _log(backend, clock)
+
+        assert await log.get(f"evt-missing-{uuid.uuid4().hex}") is None

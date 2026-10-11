@@ -1000,6 +1000,11 @@ class FakeBackend(SourceSyncBackend):
             ]
         return rows[:limit]
 
+    async def get_work_event(self, event_id: str) -> dict[str, Any] | None:
+        async with self._lock:
+            row = self._work_events.get(event_id)
+            return None if row is None else copy.deepcopy(row)
+
     async def claim_work_event_deliveries(
         self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
     ) -> list[dict[str, Any]]:

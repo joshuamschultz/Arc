@@ -456,10 +456,16 @@ class WorkflowRunner:
         """A gate naming a role no team member holds can never be decided: refuse
         the run up front with the reason, rather than strand it at the gate."""
         steps = [cast(HumanStepSpec, n) for n in definition.nodes if n.kind in HUMAN_STEP_KINDS]
+        await self._refuse_non_user_escalations(definition.id, steps, initiator_did)
         if not any(approver_roles((*s.approvers, s.escalate_to or "")) for s in steps):
             return
-        declared = frozenset() if self._roles is None else await self._roles.declared_roles()
-        issues = check_gate_roles(definition, declared)
+        if self._roles is None:
+            declared: frozenset[str] = frozenset()
+            user_roles: frozenset[str] = frozenset()
+        else:
+            declared = await self._roles.declared_roles()
+            user_roles = await self._roles.user_roles()
+        issues = check_gate_roles(definition, declared, escalation_roles=user_roles)
         if not issues:
             return
         reason = "; ".join(f"{i.node_id}.{i.field}: {i.error} ({i.observed})" for i in issues)
@@ -471,6 +477,34 @@ class WorkflowRunner:
             extra={"reason": reason},
         )
         raise WorkflowRunError(f"workflow {definition.id!r} cannot start: {reason}")
+
+    async def _refuse_non_user_escalations(
+        self, workflow_id: str, steps: list[HumanStepSpec], initiator_did: str
+    ) -> None:
+        """An ``escalate_to`` DID must be a registered human user (REQ-622).
+
+        Asked of the live registry at every start, never trusted from authoring:
+        an agent named here could approve its own run (ASI09), and a user removed
+        since signing must not still receive the decision. No roster → refused.
+        """
+        refused: list[str] = []
+        for step in steps:
+            target = step.escalate_to
+            if target is None or approver_roles((target,)):
+                continue
+            if self._roles is None or not await self._roles.is_user(target):
+                refused.append(f"{step.id}.escalate_to: not a registered user ({target})")
+        if not refused:
+            return
+        reason = "; ".join(refused)
+        self._audit(
+            "workflow.run.refused",
+            target=workflow_id,
+            outcome="escalate_to_not_a_user",
+            actor_did=initiator_did,
+            extra={"reason": reason},
+        )
+        raise WorkflowRunError(f"workflow {workflow_id!r} cannot start: {reason}")
 
     async def start_run(
         self,
@@ -2407,6 +2441,12 @@ class _NoRegistry:
         return frozenset()
 
     async def roles_of(self, did: str) -> frozenset[str]:
+        return frozenset()
+
+    async def is_user(self, did: str) -> bool:
+        return False
+
+    async def user_roles(self) -> frozenset[str]:
         return frozenset()
 
 

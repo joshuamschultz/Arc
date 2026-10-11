@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 
 from arcstore.backends import ArcStoreBackend, open_backend
 from arcstore.tasks import TaskStore
+from arcstore.work_events import WorkEventLog
 
 
 async def open_store(
@@ -21,7 +22,8 @@ async def open_store(
     backend = await opener() if opener is not None else open_backend()
     if opener is None:
         await backend.start()
-    return TaskStore(backend), backend
+    # Intake rows this agent settles append their run.* work event (SPEC-088).
+    return TaskStore(backend, work_events=WorkEventLog(backend)), backend
 
 
 __all__ = ["open_store"]

@@ -370,6 +370,10 @@ class ArcStoreBackend(Protocol):
         """
         ...
 
+    async def get_work_event(self, event_id: str) -> dict[str, Any] | None:
+        """The stored event for ``event_id`` with its ``seq``, or ``None``."""
+        ...
+
     async def claim_work_event_deliveries(
         self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
     ) -> list[dict[str, Any]]:

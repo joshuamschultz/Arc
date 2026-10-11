@@ -30,6 +30,8 @@ from arccli.service_watchdog import ServiceWatchdog, enable_fault_dumps
 
 if TYPE_CHECKING:
     from arctrust import PrincipalStore
+    from arctrust.callback_allowlist import CallbackAllowlistStore
+    from arctrust.work_event_signer import WorkEventSigner
     from arcui.principals import PrincipalsConfig
 
 # Valid layer values — enforced at parse time.
@@ -311,6 +313,10 @@ def _start(args: argparse.Namespace) -> None:
         user_store_factory=accounts,
         # SPEC-087: app principals live in the same account authority.
         principal_store_factory=_principal_store_factory(accounts),
+        # SPEC-088: the callback-origin allowlist, same authority.
+        callback_allowlist_factory=_callback_allowlist_factory(accounts),
+        # SPEC-088: the work-events key that signs callbacks; None sends none.
+        work_event_signer=_work_event_signer(),
         principals_config=_principals_config(gateway_config),
         auth_config=auth,
         max_agents=max_agents,
@@ -482,6 +488,28 @@ def _principal_store_factory(accounts: Any) -> Callable[[], PrincipalStore] | No
     from arccli.commands._accounts import _AuthorityFactory
 
     return accounts.principals if isinstance(accounts, _AuthorityFactory) else None
+
+
+def _callback_allowlist_factory(accounts: Any) -> Callable[[], CallbackAllowlistStore] | None:
+    """The callback allowlist bound to the account authority, or None (callbacks get 503)."""
+    from arccli.commands._accounts import _AuthorityFactory
+
+    return accounts.callbacks if isinstance(accounts, _AuthorityFactory) else None
+
+
+def _work_event_signer() -> WorkEventSigner | None:
+    """The deployment's work-events signing key, or None (no callback is ever sent).
+
+    A malformed ``[security]`` block is logged loudly and leaves callbacks
+    unavailable; it never falls back to another key.
+    """
+    from arctrust.work_event_signer import work_event_signer_for
+
+    try:
+        return work_event_signer_for()
+    except ValueError as exc:
+        _logger.error("work-event callbacks: %s; callbacks are unavailable", exc)
+        return None
 
 
 def _principals_config(gateway_config: Any | None) -> PrincipalsConfig:

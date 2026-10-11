@@ -17,7 +17,7 @@ an agent never knows about the fleet layer.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
@@ -94,6 +94,10 @@ class FleetDirectory(Protocol):
         """Agents that may currently be given work. Filtering is the fleet's call."""
         ...
 
+    async def list_users(self) -> Mapping[str, frozenset[str]]:
+        """Each active human user's DID and roles: who a workflow may escalate to."""
+        ...
+
 
 class FleetMessenger(Protocol):
     """Delivery of one notice to another inbox."""
@@ -140,6 +144,7 @@ class FleetProvider(Protocol):
         operator_public_key: bytes | None,
         audit: Any,
         known_agents: Any,
+        known_users: Any,
         runner: Any,
         runs: Any,
     ) -> tuple[Any, Any] | None:
@@ -148,8 +153,9 @@ class FleetProvider(Protocol):
         Running one workflow across many agents is the orchestration layer's
         whole job, so it builds the plane; the agent supplies only what is its
         own — where its bundles live, its tier, the operator key it verifies
-        against, and its audit hook. ``known_agents`` is read at validation time
-        rather than captured, because the roster changes while an agent runs.
+        against, and its audit hook. ``known_agents`` and ``known_users`` are
+        read at validation time rather than captured, because the roster changes
+        while an agent runs; ``known_users`` returns None when no roster was read.
 
         None when no workflow engine is installed: authoring then reports itself
         unavailable and every other capability is untouched.

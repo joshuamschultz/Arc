@@ -331,6 +331,24 @@ class VaultTransit:
             raise SignerError(f"Vault Transit signature refused: {exc}") from None
         return raw
 
+    def create_signing_key(self, key_ref: str) -> bytes:
+        """Create the non-exportable signing key for ``key_ref``; return its public half.
+
+        Sends the flags ``transit_http.create_user_key`` sends, explicitly, with the
+        deployment's algorithm as the key type. Vault leaves an existing key unchanged
+        on create, and the metadata check that follows refuses a key that is
+        exportable, backup-able, deletable or of another type (fail closed).
+        """
+        name = self._vault_name(key_ref)
+        body: dict[str, Any] = {
+            "type": self._algorithm,
+            "derived": False,
+            "exportable": False,
+            "allow_plaintext_backup": False,
+        }
+        self._op("key_create", name, f"keys/{name}", body)
+        return self.public_key(key_ref)
+
     def verify(self, key_ref: str, message: bytes, signature: bytes) -> bool:
         """Ask Vault whether ``signature`` is valid for ``message`` under the key."""
         key = self._signing_key(key_ref)
@@ -442,7 +460,7 @@ class VaultTransit:
         action: str,
         key_name: str,
         path: str,
-        body: dict[str, str] | None,
+        body: dict[str, Any] | None,
         *,
         refusable: bool = False,
     ) -> dict[str, Any]:
@@ -469,7 +487,7 @@ class VaultTransit:
                 duration_ms=int((self._clock() - started) * 1000),
             )
 
-    def _attempts(self, path: str, body: dict[str, str] | None) -> tuple[dict[str, Any], int]:
+    def _attempts(self, path: str, body: dict[str, Any] | None) -> tuple[dict[str, Any], int]:
         url = f"/v1/{self._config.mount}/{path}"
         method = "GET" if body is None else "POST"
         status = 0
@@ -489,7 +507,7 @@ class VaultTransit:
         raise VaultTransitUnavailableError(f"Vault Transit unavailable ({status or 'no answer'})")
 
     def _send(
-        self, method: str, url: str, body: dict[str, str] | None
+        self, method: str, url: str, body: dict[str, Any] | None
     ) -> tuple[int, httpx.Response | None]:
         """One request with a live token; a 403 re-mints the token once and resends."""
         for reauth in (False, True):

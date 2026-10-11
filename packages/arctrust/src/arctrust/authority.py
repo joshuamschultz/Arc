@@ -12,9 +12,10 @@ from typing import Any, Protocol
 
 from arctrust.audit import AuditSink, DurableAuditSink
 from arctrust.authority_config import DeploymentAuthorityConfig, load_authority_config
+from arctrust.callback_allowlist import CallbackAllowlistStore
 from arctrust.identity import parse_did
 from arctrust.monotonic import BootstrapAuthority, MonotonicAnchor
-from arctrust.principals import PrincipalStore
+from arctrust.principals import PrincipalStore, Tier
 from arctrust.transit_http import VaultTransitHTTP
 from arctrust.users import UserStore
 from arctrust.vault_anchor import VaultKVAnchor
@@ -72,14 +73,18 @@ class AccountAuthority:
         self._strict_audit_sink = strict_audit_sink
         self._actor_verifier = actor_verifier
         self._users_path = users_path
-        # Same private directory as the users cache: one authority, two records.
+        # Same private directory as the users cache: one authority, one file per record.
         self._principals_path = users_path.with_name("principals.json")
+        self._callbacks_path = users_path.with_name("callbacks.json")
         self._issuer = VaultTransitHTTP(
             leases[Capability.ISSUER]._adapter_client(), mount=config.transit_mount
         )
         self._anchor, self._cipher = self._sealed_record("users", bootstrap_authority)
         self._principal_anchor, self._principal_cipher = self._sealed_record(
             "principals", bootstrap_authority
+        )
+        self._callback_anchor, self._callback_cipher = self._sealed_record(
+            "callbacks", bootstrap_authority
         )
 
     def _sealed_record(
@@ -134,6 +139,25 @@ class AccountAuthority:
             audit_sink=self._audit_sink,
             strict_audit_sink=self._strict_audit_sink,
             actor_did=did,
+        )
+
+    def callback_allowlist_store(
+        self, actor_proof: object, *, tier: Tier
+    ) -> CallbackAllowlistStore:
+        """Bind the callback-origin allowlist to an authenticated actor and strict audit.
+
+        ``tier`` is the deployment tier: it decides whether an add is active at
+        once (personal) or pending a second step (enterprise, federal).
+        """
+        did = self._actor_did(actor_proof, action="callbacks.mutate")
+        return CallbackAllowlistStore(
+            self._callbacks_path,
+            anchor=self._callback_anchor,
+            cipher=self._callback_cipher,
+            audit_sink=self._audit_sink,
+            strict_audit_sink=self._strict_audit_sink,
+            actor_did=did,
+            tier=tier,
         )
 
     def close(self) -> None:

@@ -18,7 +18,7 @@ import logging
 import uuid
 from typing import Any
 
-from arcstore.tasks import Task
+from arcstore.tasks import Task, TaskLinkError
 from arcteam.mail import MailSendRequest
 from pydantic import ValidationError
 from starlette.requests import Request
@@ -39,11 +39,23 @@ from arcui.schemas import ErrorResponse
 
 _logger = logging.getLogger(__name__)
 
-_CREATE_FIELDS = ("description", "priority", "owner_did", "tags", "requires_review")
+# Fields both create and PATCH accept, validated through the ``Task`` model
+# with the deployment's tier and clearance (SPEC-088 REQ-602/603).
+_EDITABLE_FIELDS = (
+    "description",
+    "priority",
+    "owner_did",
+    "tags",
+    "requires_review",
+    "due_at",
+    "classification",
+)
+# Links are create-time only: once written they are the store's to manage.
+_CREATE_FIELDS = (*_EDITABLE_FIELDS, "parent_id", "blocked_by")
 # Fields a PATCH may write. A raw patch is never trusted wholesale (SEC-F4):
-# status/id/created_at/run_id/blocked_by are managed by the store's own
+# status/id/created_at/run_id/blocked_by/metadata are managed by the store's own
 # transitions, never by a client-supplied key.
-_PATCH_FIELDS = ("title", *_CREATE_FIELDS)
+_PATCH_FIELDS = ("title", *_EDITABLE_FIELDS)
 
 
 def _first_error_message(exc: ValidationError) -> str:
@@ -60,23 +72,25 @@ def _first_error_message(exc: ValidationError) -> str:
     return f"{loc}: {msg}"
 
 
-def _valid_edits(
-    task_id: str, edits: dict[str, Any], *, actor_did: str, allow_external_refs: bool
-) -> str | None:
+def _validated_edits(
+    task_id: str, edits: dict[str, Any], *, actor_did: str, context: dict[str, Any]
+) -> dict[str, Any] | str:
     """Validate patched fields through the ``Task`` model (SEC-F2).
 
     A partial patch never constructs a full ``Task``, so it would otherwise
-    bypass the model's injection/oversized/zero-width sanitizer. Build a probe
-    task carrying the edited values and let the model's field validators run.
-    Returns ``None`` when the patch is safe, else the client-facing reason.
+    bypass the model's injection/oversized/zero-width sanitizer and the
+    tier-gated classification parse. Build a probe task carrying the edited
+    values and let the model's field validators run. Returns the edits as the
+    model normalized them (a classification becomes its ladder name), else the
+    client-facing reason.
     """
     probe: dict[str, Any] = {"id": task_id, "creator_did": actor_did, "title": "probe"}
     probe.update(edits)
     try:
-        Task.model_validate(probe, context={"allow_external_refs": allow_external_refs})
+        validated = Task.model_validate(probe, context=context)
     except ValidationError as exc:
         return _first_error_message(exc)
-    return None
+    return {key: getattr(validated, key) for key in edits}
 
 
 def _allow_external_refs(request: Request) -> bool:
@@ -86,6 +100,22 @@ def _allow_external_refs(request: Request) -> bool:
     a bare test app → fail-closed to the federal default.
     """
     return bool(getattr(request.app.state, "allow_external_task_refs", False))
+
+
+def _validation_context(request: Request) -> dict[str, Any]:
+    """The ``Task`` validation context for a caller-supplied create or patch.
+
+    Carries the ingest policy, the deployment tier (strict classification
+    labels at federal) and the deployment clearance (no label above it, at any
+    tier) so every human or app write is parsed the same way (SPEC-088 REQ-603).
+    """
+    config = getattr(request.app.state, "principals_config", None)
+    return {
+        "allow_external_refs": _allow_external_refs(request),
+        # Absent on a bare app: the strictest tier, never a looser one.
+        "tier": "federal" if config is None else config.tier,
+        "clearance": str(getattr(request.app.state, "inbox_clearance", "UNCLASSIFIED")),
+    }
 
 
 def _error(message: str, status: int) -> JSONResponse:
@@ -103,6 +133,39 @@ async def _json_body(request: Request) -> dict[str, Any] | None:
     except Exception:  # reason: malformed body is a client error, not a 500
         return None
     return body if isinstance(body, dict) else None
+
+
+def _new_task(request: Request, body: dict[str, Any], title: str) -> Task | str:
+    """Build the new task from the body, or return the client-facing reason.
+
+    Caller metadata is namespaced under ``metadata.app`` (D-850) so a caller
+    can never write the platform keys that make a row a workflow node. The
+    creator is SPEC-087's acting identity. A rejected value (injection guard,
+    over-length, tier-blocked URL, naive deadline, label above clearance) is a
+    client error, not a 500.
+    """
+    fields: dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "creator_did": acting_identity(request).actor_did,
+    }
+    fields.update({key: body[key] for key in _CREATE_FIELDS if key in body})
+    if "metadata" in body:
+        if not isinstance(body["metadata"], dict):
+            return "metadata: must be a JSON object"
+        fields["metadata"] = {"app": body["metadata"]}
+    try:
+        return Task.model_validate(fields, context=_validation_context(request))
+    except ValidationError as exc:
+        return _first_error_message(exc)
+
+
+def _refuse_create(request: Request, reason: str) -> JSONResponse:
+    """One audited 400 for a create the caller was allowed to try but sent badly."""
+    emit_mutation_audit(
+        request, target="task:new", operation="task.create", outcome="denied", detail=reason
+    )
+    return _error(reason, 400)
 
 
 async def create_task(request: Request) -> JSONResponse:
@@ -126,21 +189,15 @@ async def create_task(request: Request) -> JSONResponse:
     if not isinstance(title, str) or not title.strip():
         return _error("missing or blank title", 400)
 
-    creator = acting_identity(request).actor_did
-    fields: dict[str, Any] = {"id": str(uuid.uuid4()), "title": title, "creator_did": creator}
-    for key in _CREATE_FIELDS:
-        if key in body:
-            fields[key] = body[key]
-    # A rejected value (injection guard, over-length, tier-blocked URL) is a
-    # client error, not a 500: validate here and surface the reason as a 400.
-    try:
-        task = Task.model_validate(
-            fields, context={"allow_external_refs": _allow_external_refs(request)}
-        )
-    except ValidationError as exc:
-        return _error(_first_error_message(exc), 400)
+    task = _new_task(request, body, title)
+    if isinstance(task, str):
+        return _refuse_create(request, task)
 
     store = request.app.state.task_store
+    try:
+        await store.validate_links(task.parent_id, task.blocked_by)
+    except TaskLinkError as exc:
+        return _refuse_create(request, str(exc))
     created = await store.create(task)
 
     notification_status = "not_applicable"
@@ -202,14 +259,14 @@ async def patch_task(request: Request) -> JSONResponse:
     if not edits:
         return _error("no editable fields", 400)
     actor = acting_identity(request).actor_did
-    reason = _valid_edits(
-        task_id, edits, actor_did=actor, allow_external_refs=_allow_external_refs(request)
+    validated = _validated_edits(
+        task_id, edits, actor_did=actor, context=_validation_context(request)
     )
-    if reason is not None:
-        return _error(reason, 400)
+    if isinstance(validated, str):
+        return _error(validated, 400)
 
     store = request.app.state.task_store
-    updated, outcome = await store.edit(task_id, edits, actor_did=actor)
+    updated, outcome = await store.edit(task_id, validated, actor_did=actor)
     if outcome == "not_found":
         return _error("not found", 404)
     if outcome in ("in_progress", "conflict"):

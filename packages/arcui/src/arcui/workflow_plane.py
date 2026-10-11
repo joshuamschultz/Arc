@@ -30,6 +30,7 @@ from uuid import uuid4
 from arcstore.runs import NodeState
 from arcteam.workflow import explain_node_error, run_failure_reason
 from arcteam.workflow.errors import GateNotAuthorizedError, WorkflowError
+from arcteam.workflow.gate_outcome import DECISIONS
 from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
 from arcteam.workflow.runner_contracts import TriggerContext
@@ -224,6 +225,9 @@ class DashboardWorkflowPlane:
             for node in definition.nodes
         ]
         detail["edges"] = _edges(definition)
+        detail["events"] = [
+            {"name": event.name, "schema": event.schema_ref} for event in definition.events
+        ]
         detail["channel"] = definition.channel
         detail["versions"] = [
             {
@@ -344,9 +348,13 @@ class DashboardWorkflowPlane:
         return _text_or_none(pinned.owner)
 
     async def gate_owner_did(self, task_id: str) -> str | None:
-        """The owner agent DID the runner wrote on a gate row; None otherwise."""
+        """The owner agent DID the runner wrote on a gate or human_input row; else None.
+
+        Both kinds are decided through the gate route (D-845), so both bind
+        ``gates:resolve`` to their owner agent.
+        """
         task = await self._tasks.get(task_id)
-        if task is None or str(task.metadata.get("node_kind", "")) != "gate":
+        if task is None or str(task.metadata.get("node_kind", "")) not in DECISIONS:
             return None
         return _text_or_none(task.owner_did)
 
@@ -543,6 +551,28 @@ class DashboardWorkflowPlane:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))
 
+    async def fire_event(
+        self,
+        workflow_id: str,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Relay a declared event. The run id is keyed to the principal (REQ-606)."""
+        result = await self._plane.fire_event(
+            workflow_id,
+            name,
+            payload,
+            idempotency_key=idempotency_key,
+            actor_did=actor.principal_did,
+            on_behalf_of=actor.on_behalf_of,
+        )
+        if not result.ok or result.run is None:
+            return _errors(result)
+        return ControlPlaneResult(value=_run_summary(result.run), replayed=result.replayed)
+
     async def test_run_workflow(
         self, workflow_id: str, *, actor: OperatorActor
     ) -> ControlPlaneResult:
@@ -605,18 +635,22 @@ class DashboardWorkflowPlane:
         decision: str,
         notes: str,
         actor: OperatorActor,
+        payload: dict[str, Any] | None = None,
     ) -> ControlPlaneResult:
         """Relay the reviewer's choice. The plane decides what it means (REQ-246).
 
-        The decider is the acting identity: its DID and its own roles (an app
-        adds none), so the control plane's approver list decides who may
-        resolve. A refusal there is ``forbidden``.
+        The decider is the acting identity: its DID (the person an app acts
+        for, else the caller) and its own roles (an app adds none), so the
+        control plane's approver list decides who may resolve. A refusal there
+        is ``forbidden``; a payload failing the step's schema is
+        ``unprocessable``.
         """
         try:
             result = await self._plane.resolve_gate(
                 task_id,
                 decision=decision,
                 notes=notes,
+                payload=payload,
                 decider_did=actor.did,
                 on_behalf_of=actor.on_behalf_of,
                 actor_roles=actor.roles,
@@ -725,7 +759,13 @@ def _placeholder_refusal(owner: str) -> ControlPlaneResult | None:
 
 
 def _errors(result: Any) -> ControlPlaneResult:
-    """arcteam's typed issues, verbatim — the route layer reinterprets nothing."""
+    """arcteam's typed issues, verbatim — the route layer reinterprets nothing.
+
+    Each issue's refusal class (``code``) picks the flag the route maps to a
+    status: ``not_found`` 404, ``conflict`` 409, ``invalid_payload`` 422;
+    anything unclassified stays a repairable 400.
+    """
+    codes = {str(getattr(issue, "code", "") or "") for issue in result.errors}
     issues = [
         WorkflowFieldError(
             node_id=str(getattr(issue, "node_id", "") or ""),
@@ -736,8 +776,13 @@ def _errors(result: Any) -> ControlPlaneResult:
         )
         for issue in result.errors
     ]
-    conflict = any(issue.field == "version" for issue in issues)
-    return ControlPlaneResult(errors=issues, conflict=conflict)
+    conflict = "conflict" in codes or any(issue.field == "version" for issue in issues)
+    return ControlPlaneResult(
+        errors=issues,
+        conflict=conflict,
+        not_found="not_found" in codes,
+        unprocessable="invalid_payload" in codes,
+    )
 
 
 def _run_summary(run: Any) -> dict[str, Any]:

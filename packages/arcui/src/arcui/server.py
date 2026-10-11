@@ -18,8 +18,9 @@ import logging
 import re
 from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import arcagent
 import arctrust
@@ -38,11 +39,15 @@ from arcstore.inbox_spool import InboxProjectionSpool
 from arcstore.mail_outbox import MailOutbox, PostgresMailOutbox
 from arcstore.standing_grants import StandingGrantStore
 from arcstore.tasks import TaskStore
+from arcstore.work_events import WorkEventLog
+from arctrust.audit import NullSink
+from arctrust.callback_allowlist import CallbackAllowlistStore
+from arctrust.work_event_signer import WorkEventSigner
 from pydantic import SecretStr
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
-from starlette.routing import Mount, Route
+from starlette.routing import BaseRoute, Mount, Route
 from starlette.staticfiles import StaticFiles
 
 from arcui.approval_notifications import ApprovalNotificationHub
@@ -55,7 +60,7 @@ from arcui.credential_renewer import (
     migrate_or_degrade,
 )
 from arcui.observe import Observe
-from arcui.principals import PrincipalRateLimiter, PrincipalsConfig, new_replay_cache
+from arcui.principals import PrincipalRateLimiter, PrincipalsConfig, Tier, new_replay_cache
 from arcui.public_address import PublicAddress, effective_tier
 from arcui.registry import AgentRegistry
 from arcui.report_authorization import ReportReadAuthority, ReportReadWorkerPool
@@ -89,6 +94,7 @@ from arcui.routes import mcp_servers as mcp_servers_routes
 from arcui.routes import observe_run as observe_run_routes
 from arcui.routes import principals as principal_routes
 from arcui.routes import queue as queue_routes
+from arcui.routes import runs_intake as runs_intake_routes
 from arcui.routes import semantic_layer as semantic_layer_routes
 from arcui.routes import source_guide as source_guide_routes
 from arcui.routes import stack as stack_routes
@@ -102,11 +108,17 @@ from arcui.routes import team_ws as team_ws_routes
 from arcui.routes import traces as traces_routes
 from arcui.routes import trust as trust_routes
 from arcui.routes import ui_settings as ui_settings_routes
+from arcui.routes import work_event_callbacks as work_event_callbacks_routes
 from arcui.routes import workflows as workflows_routes
 from arcui.routes.auth_routes import ROUTES as _AUTH_ROUTES
 from arcui.routes.hosted_setup import ROUTES as _HOSTED_SETUP_ROUTES
 from arcui.routes.hosted_setup import HostedClaimService
 from arcui.team_stream import TeamStreamHub
+
+if TYPE_CHECKING:
+    # Optional package (REQ-633): imported at runtime only where it is composed.
+    from arcui.work_events import CallbackPolicy
+    from arcui.work_events.dispatcher import CallbackDispatcher
 
 logger = logging.getLogger(__name__)
 
@@ -276,6 +288,88 @@ def _operator_proof_issuer(
     return issue
 
 
+def _callback_policy(
+    factory: Callable[[], CallbackAllowlistStore] | None, tier: Tier
+) -> CallbackPolicy | None:
+    """The COMP-013 callback policy over the allowlist store, or None.
+
+    None when the account authority is not wired or the optional
+    ``arcui.work_events`` package is physically absent (REQ-633): intake then
+    refuses any ``callback_url`` instead of failing at startup.
+    """
+    if factory is None:
+        return None
+    try:
+        from arcui.work_events import CallbackPolicy
+    except ImportError:
+        logger.warning("callback policy unavailable: arcui.work_events is not installed")
+        return None
+    return CallbackPolicy(lambda: factory().list(), tier=tier)
+
+
+def _work_event_routes() -> list[BaseRoute]:
+    """The COMP-014 stream, page and key routes, or none when the module is absent.
+
+    REQ-633: a physically absent ``arcui.routes.work_events`` leaves the paths
+    unserved (404) and every other route working.
+    """
+    try:
+        from arcui.routes import work_events
+    except ImportError:
+        logger.warning("work-event stream unavailable: arcui.routes.work_events is not installed")
+        return []
+    return list(work_events.routes)
+
+
+#: ``(text) -> None``: delivers one notice on the operator's configured channel.
+OperatorSend = Callable[[str], Awaitable[None]]
+
+
+async def _start_callback_dispatcher(
+    app: Starlette, operator_send: OperatorSend | None
+) -> CallbackDispatcher | None:
+    """Start COMP-013 delivery when a work-events key AND the callback policy exist.
+
+    None (and nothing is ever sent) without a key, without the account authority
+    behind the allowlist, or with ``arcui.work_events`` physically absent; intake
+    then reports notifications as unavailable and pending deliveries stay pending.
+    """
+    state = app.state
+    if state.work_event_signer is None or state.callback_policy is None:
+        return None
+    try:
+        import httpx
+
+        from arcui.work_events.dispatcher import MAX_ATTEMPTS, build_callback_dispatcher
+        from arcui.work_events.policy import system_resolver
+    except ImportError:
+        logger.warning("work-event callbacks unavailable: arcui.work_events is not installed")
+        return None
+
+    async def notify_operator(event_id: str) -> None:
+        text = f"Work-event callback undeliverable after {MAX_ATTEMPTS} attempts: {event_id}"
+        if operator_send is None:
+            logger.warning("work-event callback dead event=%s; no operator channel", event_id)
+            return
+        await operator_send(text)
+
+    worm = state.audit_worm
+    dispatcher = build_callback_dispatcher(
+        state.work_event_log,
+        signer=state.work_event_signer,
+        policy=state.callback_policy,
+        transport=httpx.AsyncHTTPTransport(retries=0),
+        resolver=system_resolver,
+        notify_operator=notify_operator,
+        audit_sink=worm.sink if worm is not None else NullSink(),
+        clock=lambda: datetime.now(UTC),
+    )
+    if dispatcher is not None:
+        await dispatcher.start()
+    state.callback_dispatcher = dispatcher
+    return dispatcher
+
+
 def create_app(
     *,
     auth_config: AuthConfig | None = None,
@@ -283,6 +377,7 @@ def create_app(
     user_store_factory: Callable[[], arctrust.UserStore] | None = None,
     principal_store_factory: Callable[[], arctrust.PrincipalStore] | None = None,
     principals_config: PrincipalsConfig | None = None,
+    callback_allowlist_factory: Callable[[], CallbackAllowlistStore] | None = None,
     skill_revision_anchor_factory: Callable[[str, str], arctrust.MonotonicAnchor] | None = None,
     control: arcagent.ControlArtifactBinding | None = None,
     report_read_authority: ReportReadAuthority | None = None,
@@ -316,6 +411,7 @@ def create_app(
     inbox_service: DurableInboxService | None = None,
     inbox_delivery_port: Any | None = None,
     inbox_clearance: str = "UNCLASSIFIED",
+    work_event_signer: WorkEventSigner | None = None,
 ) -> Starlette:
     """Build a Starlette application with all ArcUI routes.
 
@@ -326,6 +422,14 @@ def create_app(
             credential 503 ``account_authority_unavailable``.
         principals_config: ``[ui.principals]`` stamped with the deployment tier.
             ``None`` uses the defaults at the effective deployment tier.
+        callback_allowlist_factory: SPEC-088 callback-origin allowlist store bound
+            to the account authority, opened per use. ``None`` answers the
+            allowlist routes 503 and leaves ``callback_policy`` unset (``None``),
+            so a ``callback_url`` on intake is refused.
+        work_event_signer: SPEC-088 COMP-019 work-events signing capability
+            (``arctrust.work_event_signer.work_event_signer_for``). ``None``
+            starts no callback dispatcher (nothing is sent unsigned) and the
+            published-key route answers 503.
         queue_coordinator: Initialized coordinator shared with embedded agents.
         queue_tenant_id: Trusted deployment tenant bound to that coordinator.
         queue_owner_epoch: Broker-issued lease epoch used by durable queue jobs.
@@ -426,6 +530,7 @@ def create_app(
         *system_config_routes.routes,
         *stats_routes.routes,
         *observe_run_routes.routes,
+        *runs_intake_routes.routes,
         *queue_routes.routes,
         *export_routes.routes,
         *cost_efficiency_routes.routes,
@@ -468,6 +573,10 @@ def create_app(
         *trust_routes.routes,
         # SPEC-087 COMP-011: a signed-in person's own app delegations.
         *principal_routes.routes,
+        # SPEC-088 COMP-018: operator-session only; no APP_ROUTES row.
+        *work_event_callbacks_routes.routes,
+        # SPEC-088 COMP-014: optional; absent module -> paths unserved.
+        *_work_event_routes(),
         *workflows_routes.routes,
         # SPEC-082: the always-on fleet MCP door. Mounted by prefix so the whole
         # remainder (a DID that itself contains a "/") is the sub-path. Matched
@@ -710,6 +819,21 @@ def create_app(
             )
             await approval_dispatcher.start()
             starlette_app.state.approval_notification_dispatcher = approval_dispatcher
+        # SPEC-088 COMP-013: dead callbacks reach the operator on the same
+        # configured channel the approval notices use.
+        operator_send: OperatorSend | None = None
+        if (
+            embedded_gateway is not None
+            and gateway_config is not None
+            and approval_operator_target is not None
+        ):
+            gateway_router = embedded_gateway.session_router
+            gateway_agent = gateway_config.gateway.agent_did
+
+            async def operator_send(text: str) -> None:
+                await gateway_router.send(approval_operator_target, text, agent_did=gateway_agent)
+
+        callback_dispatcher = await _start_callback_dispatcher(starlette_app, operator_send)
         # P18-2: migrate plaintext connector credentials into sealed custody
         # first. If that cannot complete, start degraded: the Custody panel lets
         # the operator answer for each key. Then keep OAuth tokens fresh on a timer.
@@ -750,6 +874,9 @@ def create_app(
             await credential_renewer.stop()
             if approval_dispatcher is not None:
                 await approval_dispatcher.stop()
+            if callback_dispatcher is not None:
+                starlette_app.state.callback_dispatcher = None
+                await callback_dispatcher.stop()
             try:
                 await starlette_app.state.observe.stop()
             except Exception:  # reason: fail-open — continue shutdown
@@ -843,10 +970,18 @@ def create_app(
     app.state.principals_config = principals_config or PrincipalsConfig.model_validate(
         {"tier": effective_tier()}
     )
+    # SPEC-088 COMP-018/COMP-013: the allowlist routes and the intake gate read
+    # the same anchored store; the policy re-reads it on every check.
+    app.state.callback_allowlist_factory = callback_allowlist_factory
+    app.state.callback_policy = _callback_policy(
+        callback_allowlist_factory, app.state.principals_config.tier
+    )
     app.state.principal_rate_limiter = PrincipalRateLimiter(
         app.state.principals_config.rate_per_minute
     )
     app.state.principal_replay_cache = new_replay_cache()
+    # SPEC-088 COMP-011: per (principal, workflow) event rate.
+    app.state.workflow_event_limiter = PrincipalRateLimiter(workflows_routes.EVENT_RATE_PER_MINUTE)
     app.state.skill_revision_anchor_factory = skill_revision_anchor_factory
     app.state.control_binding = control
     app.state.schedule_control_authority = None if control is None else control.authority
@@ -891,7 +1026,14 @@ def create_app(
         worm_public_key=audit_worm.sink.public_key if audit_worm is not None else None,
     )
     # TaskStore writer (SPEC-056 Phase D) — see `task_store_backend` above.
-    app.state.task_store = TaskStore(task_store_backend)
+    # Intake rows settled through it append their run.* work event (SPEC-088).
+    work_event_log = WorkEventLog(task_store_backend)
+    app.state.task_store = TaskStore(task_store_backend, work_events=work_event_log)
+    # SPEC-088 COMP-012..014: the same log feeds the stream routes and the
+    # callback dispatcher (started in the lifespan only with a key and a policy).
+    app.state.work_event_log = work_event_log
+    app.state.work_event_signer = work_event_signer
+    app.state.callback_dispatcher = None
     app.state.arcstore_backend = task_store_backend
     # Mechanical HITL approvals (SPEC-035) — same shared backend, "approvals"
     # collection; the operator surface for trifecta-block requests.

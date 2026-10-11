@@ -5,6 +5,7 @@ D-007). No push, no polling machinery: each endpoint is a synchronous
 request→response read from ``app.state.observe`` (the arcstore mirror).
 
 - ``GET /api/runs`` — list of real runs (one per request_id), newest first.
+  Operator and viewer sessions only: it has no ``APP_ROUTES`` row.
 - ``GET /api/runs/{run_id}/timeline`` — merged tool/code/llm/run timeline.
 - ``GET /api/runs/{run_id}/audit`` — signed audit rows joined on ``causal.run_id``.
 - ``GET /api/runs/{run_id}/recalls`` — memory recall-attribution events for a run.
@@ -22,8 +23,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from arcui.acting import app_target_refusal, is_app
-from arcui.principals import Scope
+from arcui.acting import is_app
+from arcui.routes.runs_intake import load_intake_row, run_read_refusal
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -73,36 +74,41 @@ async def get_runs(request: Request) -> JSONResponse:
 
 
 async def get_run_timeline(request: Request) -> JSONResponse:
-    """GET /api/runs/{run_id}/timeline — ordered tool/code/llm/run events for a run.
-
-    Operator and viewer sessions read any run, as before. An app needs
-    ``runs:read`` on the agent the trace itself names (SPEC-087 COMP-005); an
-    unknown or unattributable run is 404 to it.
-    """
+    """GET /api/runs/{run_id}/timeline — ordered tool/code/llm/run events for a run."""
     run_id = request.path_params["run_id"]
     if not _VALID_ID_RE.match(run_id):
         return _invalid("Invalid run_id format")
     timeline = await request.app.state.observe.timeline(run_id=run_id)
-    if is_app(request):
-        denial = await _app_timeline_refusal(request, run_id, timeline)
-        if denial is not None:
-            return denial
+    denial = await _app_read_refusal(request, run_id, "run.timeline.read", timeline)
+    if denial is not None:
+        return denial
     return JSONResponse({"run_id": run_id, "timeline": timeline})
 
 
-async def _app_timeline_refusal(
-    request: Request, run_id: str, timeline: list[dict[str, Any]]
+async def _app_read_refusal(
+    request: Request,
+    run_id: str,
+    operation: str,
+    timeline: list[dict[str, Any]] | None = None,
 ) -> JSONResponse | None:
-    async def _trace_agent() -> str | None:
-        return _single_agent(timeline)
+    """None when the caller may read this run; else one audited 404 (REQ-598).
 
-    return await app_target_refusal(
-        request,
-        Scope.RUNS_READ,
-        _trace_agent,
-        target=f"run:{run_id}",
-        operation="run.timeline.read",
-    )
+    Operator and viewer sessions read any run. An app needs ``runs:read`` on
+    the run's agent: the intake row's owner when the run was started through
+    ``POST /api/runs``, else the one agent its own trace names. A run with no
+    resolvable agent and a run outside the app's scope get the same 404, so an
+    app cannot probe which runs exist.
+    """
+    if not is_app(request):
+        return None
+    row = await load_intake_row(request, run_id)
+    if row is not None:
+        agent = row.owner_did
+    else:
+        if timeline is None:
+            timeline = await request.app.state.observe.timeline(run_id=run_id)
+        agent = _single_agent(timeline)
+    return run_read_refusal(request, run_id, agent, operation=operation)
 
 
 def _single_agent(timeline: list[dict[str, Any]]) -> str | None:
@@ -121,6 +127,9 @@ async def get_run_audit(request: Request) -> JSONResponse:
     run_id = request.path_params["run_id"]
     if not _VALID_ID_RE.match(run_id):
         return _invalid("Invalid run_id format")
+    denial = await _app_read_refusal(request, run_id, "run.audit.read")
+    if denial is not None:
+        return denial
     events = await request.app.state.observe.run_audit(run_id)
     return JSONResponse({"run_id": run_id, "events": events})
 
@@ -130,6 +139,9 @@ async def get_run_recalls(request: Request) -> JSONResponse:
     run_id = request.path_params["run_id"]
     if not _VALID_ID_RE.match(run_id):
         return _invalid("Invalid run_id format")
+    denial = await _app_read_refusal(request, run_id, "run.recalls.read")
+    if denial is not None:
+        return denial
     events = await request.app.state.observe.run_recalls(run_id)
     return JSONResponse({"events": events})
 
@@ -152,7 +164,7 @@ async def get_stats_by_identity(request: Request) -> JSONResponse:
 
 
 routes = [
-    Route("/api/runs", get_runs),
+    Route("/api/runs", get_runs, methods=["GET"]),
     Route("/api/runs/{run_id}/timeline", get_run_timeline),
     Route("/api/runs/{run_id}/audit", get_run_audit, methods=["GET"]),
     Route("/api/runs/{run_id}/recalls", get_run_recalls, methods=["GET"]),

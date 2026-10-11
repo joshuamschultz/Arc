@@ -25,6 +25,7 @@ from typing import Any
 from arcstore.approvals import ApprovalStore, PendingApproval
 from arcstore.standing_grants import StandingGrantRefusedError, approve_always
 from arctrust import operator_signer_for
+from arctrust.callback_allowlist import CALLBACK_ALLOWLIST_TOOL
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -35,6 +36,10 @@ from arcui.audit import emit_mutation_audit
 from arcui.principals import PRINCIPAL_ISSUE_TOOL, Scope
 from arcui.routes.principals import activate_for_approval, revoke_for_denial
 from arcui.routes.standing_grants import grant_row, standing_store
+from arcui.routes.work_event_callbacks import (
+    activate_callback_for_approval,
+    remove_callback_for_denial,
+)
 from arcui.schemas import ErrorResponse
 
 logger = logging.getLogger("arcui.routes.approvals")
@@ -305,6 +310,8 @@ async def _apply_tool_effect(
 
     SPEC-087 COMP-010: an app principal issue row activates the pending record
     it names, only while that record still hashes to the row's call_hash.
+    SPEC-088 COMP-018: a ``work_event_callback`` row does the same for the
+    pending callback allowlist entry it names.
     """
     if row.tool == WORKFLOW_SIGN_TOOL:
         signed = _sign_requested_workflow(request, row)
@@ -320,6 +327,8 @@ async def _apply_tool_effect(
         return _error(signed, 409)
     if row.tool == PRINCIPAL_ISSUE_TOOL:
         return await activate_for_approval(request, row, actor_did)
+    if row.tool == CALLBACK_ALLOWLIST_TOOL:
+        return await activate_callback_for_approval(request, row, actor_did)
     return None
 
 
@@ -463,6 +472,10 @@ async def deny_request(request: Request) -> JSONResponse:
     # Revoke before the row closes: a race can only leave the app revoked.
     if row.tool == PRINCIPAL_ISSUE_TOOL and row.status == "pending":
         refused = await revoke_for_denial(request, row, decided.actor_did)
+        if refused is not None:
+            return refused
+    if row.tool == CALLBACK_ALLOWLIST_TOOL and row.status == "pending":
+        refused = await remove_callback_for_denial(request, row, decided.actor_did)
         if refused is not None:
             return refused
     updated = await store.resolve(

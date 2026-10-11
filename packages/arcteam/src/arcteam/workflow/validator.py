@@ -26,7 +26,7 @@ the whole list comes back at once so a repair pass sees every problem.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
@@ -73,8 +73,17 @@ class KnownReferences(BaseModel):
     tools would make the check unusable exactly where it is most wanted.
     ``known=None`` skips all of them.
 
-    ``users`` is the DIDs whose registry entity type is ``user``: an
+    ``users`` is the DIDs of active registry entities of type ``user``: an
     ``escalate_to`` DID must be one of them, never an agent or a stranger.
+    Unlike the other kinds it fails closed — an EMPTY set refuses every
+    escalation DID, because nobody is left to escalate to. ``None`` means the
+    author had no roster to read (no team bus); run start, which always asks
+    the live registry, is then the check (REQ-622).
+
+    ``user_roles`` is the roles those users hold. An ``escalate_to = "role:X"``
+    must be one of them — a role only an agent holds is refused — and, like
+    ``users``, an empty set refuses and ``None`` falls back to ``roles``.
+    Approver roles are still checked against ``roles``.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -83,7 +92,8 @@ class KnownReferences(BaseModel):
     tools: frozenset[str] = frozenset()
     skills: frozenset[str] = frozenset()
     roles: frozenset[str] = frozenset()
-    users: frozenset[str] = frozenset()
+    users: frozenset[str] | None = None
+    user_roles: frozenset[str] | None = None
 
 
 def validate_definition(
@@ -351,10 +361,13 @@ def _check_known(
         if known.skills and isinstance(node, AgentNode) and node.skill is not None:
             if node.skill not in known.skills:
                 yield _unknown(node.id, "skill", node.skill, known.skills)
-        if known.users and isinstance(node, GateNode | HumanInputNode):
+        if known.users is not None and isinstance(node, GateNode | HumanInputNode):
             yield from _check_escalation_user(node, known.users)
     if known.roles:
-        yield from check_gate_roles(definition, known.roles)
+        yield from _approver_role_issues(definition, known.roles)
+    escalation_roles = known.roles if known.user_roles is None else known.user_roles
+    if known.user_roles is not None or escalation_roles:
+        yield from _escalation_role_issues(definition, escalation_roles)
 
 
 def _check_escalation_user(
@@ -378,30 +391,57 @@ def _check_escalation_user(
 
 
 def check_gate_roles(
-    definition: WorkflowSpec, declared_roles: frozenset[str]
+    definition: WorkflowSpec,
+    declared_roles: frozenset[str],
+    *,
+    escalation_roles: frozenset[str] | None = None,
 ) -> tuple[ValidationIssue, ...]:
-    """Every ``role:<name>`` a human step admits must be a role the team declares.
+    """Every ``role:<name>`` a human step admits must be a role someone holds.
 
-    Covers a gate's and a human_input node's ``approvers`` and ``escalate_to``.
-    Run start calls this with the live registry's roles and refuses the run on
+    A gate's and a human_input node's ``approvers`` are checked against
+    ``declared_roles``; ``escalate_to`` against ``escalation_roles`` — the roles
+    active human USERS hold (REQ-622) — or ``declared_roles`` when not given.
+    Run start calls this with the live registry's rosters and refuses the run on
     any issue — unlike the authoring roster check, an EMPTY roster is not
     "skip" here: a step naming a role nobody holds could never be decided (an
     escalation to one would strand the run at its deadline), and a role that
     appears later must not silently widen who decides.
     """
-    admissible = tuple(f"role:{r}" for r in sorted(declared_roles))
-    issues: list[ValidationIssue] = []
+    escalation = declared_roles if escalation_roles is None else escalation_roles
+    return (
+        *_approver_role_issues(definition, declared_roles),
+        *_escalation_role_issues(definition, escalation),
+    )
+
+
+def _human_steps(definition: WorkflowSpec) -> Iterator[HumanStepSpec]:
     for node in definition.nodes:
-        if node.kind not in HUMAN_STEP_KINDS:
-            continue
-        step = cast(HumanStepSpec, node)
+        if node.kind in HUMAN_STEP_KINDS:
+            yield cast(HumanStepSpec, node)
+
+
+def _approver_role_issues(
+    definition: WorkflowSpec, declared_roles: frozenset[str]
+) -> Iterator[ValidationIssue]:
+    admissible = _role_refs(declared_roles)
+    for step in _human_steps(definition):
         for role in sorted(approver_roles(step.approvers) - declared_roles):
-            issues.append(_unknown_role(node.id, "approvers", f"role:{role}", admissible))
-        escalate_to = step.escalate_to
-        escalation = approver_roles((escalate_to,) if escalate_to else ())
-        for role in sorted(escalation - declared_roles):
-            issues.append(_unknown_role(node.id, "escalate_to", f"role:{role}", admissible))
-    return tuple(issues)
+            yield _unknown_role(step.id, "approvers", f"role:{role}", admissible)
+
+
+def _escalation_role_issues(
+    definition: WorkflowSpec, user_roles: frozenset[str]
+) -> Iterator[ValidationIssue]:
+    """An escalation role must be held by at least one person, never only an agent."""
+    admissible = _role_refs(user_roles)
+    for step in _human_steps(definition):
+        escalation = approver_roles((step.escalate_to,) if step.escalate_to else ())
+        for role in sorted(escalation - user_roles):
+            yield _unknown_role(step.id, "escalate_to", f"role:{role}", admissible)
+
+
+def _role_refs(roles: frozenset[str]) -> tuple[str, ...]:
+    return tuple(f"role:{r}" for r in sorted(roles))
 
 
 def _unknown_role(

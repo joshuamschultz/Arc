@@ -89,6 +89,8 @@ class WorkEventBackend(Protocol):
         where: Mapping[str, str | None] | None = None,
     ) -> list[dict[str, Any]]: ...
 
+    async def get_work_event(self, event_id: str) -> dict[str, Any] | None: ...
+
     async def claim_work_event_deliveries(
         self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
     ) -> list[dict[str, Any]]: ...
@@ -168,6 +170,14 @@ class WorkEventLog:
             raise ValueError(f"unsupported work-event filter: {sorted(unknown)}")
         rows = await self._backend.read_work_events(after_seq, limit=limit, where=where)
         return [WorkEvent.model_validate(row) for row in rows]
+
+    async def get(self, event_id: str) -> WorkEvent | None:
+        """The stored event for ``event_id`` (``seq`` included), or ``None``.
+
+        The callback dispatcher loads the event a claimed delivery points at.
+        """
+        row = await self._backend.get_work_event(event_id)
+        return None if row is None else WorkEvent.model_validate(row)
 
     async def claim_deliveries(self, consumer: str, limit: int) -> list[WorkEventDelivery]:
         """Lease up to ``limit`` due deliveries to ``consumer`` for ``lease_seconds``.

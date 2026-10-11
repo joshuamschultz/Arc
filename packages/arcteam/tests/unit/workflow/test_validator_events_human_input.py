@@ -8,8 +8,8 @@ alternatives (REQ-222).
 Roster contract used here: ``KnownReferences.roles`` is the registry's declared
 roles (existing), and ``KnownReferences.users`` is the set of DIDs whose registry
 entity type is ``user``. An ``escalate_to`` DID outside ``users`` (an agent, a
-stranger) is refused; an empty ``users`` roster means "no roster of that kind"
-and skips the DID check, exactly as the other roster kinds do.
+stranger) is refused; an empty ``users`` roster refuses every DID (fail closed),
+and ``users=None`` (no roster read) defers the DID check to run start.
 """
 
 from __future__ import annotations

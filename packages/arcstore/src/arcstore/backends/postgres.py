@@ -1236,6 +1236,13 @@ class PostgresBackend(SourceSyncBackend):
             rows = await connection.fetch(statement, *params)
         return [{**_as_dict(row["envelope"]), "seq": row["seq"]} for row in rows]
 
+    async def get_work_event(self, event_id: str) -> dict[str, Any] | None:
+        async with self._require_pool().acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT seq, envelope FROM work_events WHERE event_id = $1", event_id
+            )
+        return None if row is None else {**_as_dict(row["envelope"]), "seq": row["seq"]}
+
     async def claim_work_event_deliveries(
         self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
     ) -> list[dict[str, Any]]:

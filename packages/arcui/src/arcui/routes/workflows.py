@@ -3,7 +3,8 @@
 SPEC-061 ArcFlow, COMP-023. ``GET/POST /api/workflows``, ``GET/PATCH
 /api/workflows/{id}``, ``POST /api/workflows/{id}/{archive,unarchive,run}``,
 ``GET /api/workflows/{id}/runs``, ``GET /api/workflow-runs/{id}``, ``POST
-/api/workflow-runs/{id}/cancel``, ``POST /api/workflow-tasks/{id}/gate``.
+/api/workflow-runs/{id}/cancel``, ``POST /api/workflow-tasks/{id}/gate``,
+``POST /api/workflows/{id}/events/{name}``.
 
 **Naming note:** a COMP-006 workflow Run is deliberately namespaced
 ``/api/workflow-runs/...``, never bare ``/api/runs/...`` — that path already
@@ -49,8 +50,9 @@ for an app the person it acts for (``on_behalf_of``) and the app itself
 (``via_app``). The roles handed to the gate control plane are that identity's
 roles, so an app adds no authority to the person it acts for.
 
-**App-reachable handlers:** ``POST /api/workflows/{id}/run``, ``GET
-/api/workflow-runs/{id}`` and ``POST /api/workflow-tasks/{id}/gate`` are rows
+**App-reachable handlers:** ``POST /api/workflows/{id}/run``, ``POST
+/api/workflows/{id}/events/{name}``, ``GET /api/workflow-runs/{id}`` and
+``POST /api/workflow-tasks/{id}/gate`` are rows
 of ``arcui.principals.APP_ROUTES`` with no agent in the path, so each one
 resolves the target's owning agent itself (workflow owner, run owner, gate
 row owner) and binds the scope to it; an unresolvable target is 404 to an
@@ -61,6 +63,7 @@ control plane's approver list (a refusal there is a 403).
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol, runtime_checkable
 
@@ -78,12 +81,24 @@ from arcui.acting import (
     decider,
 )
 from arcui.audit import emit_mutation_audit, emit_read_audit
-from arcui.principals import roster_did
+from arcui.principals import PrincipalRateLimiter, roster_did
 from arcui.routes.trust import operator_signer_for_request
 from arcui.schemas import ErrorResponse
 
 GateDecision = Literal["approve", "fail_run", "return_for_revision"]
 GATE_OPERATION = "gate.resolve"
+EVENT_OPERATION = "workflow.event.fire"
+
+#: The largest event or gate payload (SPEC-088 REQ-605/REQ-613). The control
+#: plane's schema check applies the same 64 KiB bound to what it validates;
+#: this one stops an oversized body before it is read or parsed at all.
+PAYLOAD_CAP_BYTES = 64 * 1024
+#: A gate body carries ``decision`` and ``notes`` around a payload of up to
+#: :data:`PAYLOAD_CAP_BYTES`; the read is bounded so no body is buffered whole.
+_GATE_BODY_CAP_BYTES = 2 * PAYLOAD_CAP_BYTES
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+#: Events one principal may fire at one workflow per minute (REQ-608).
+EVENT_RATE_PER_MINUTE = 60
 
 
 @dataclass(frozen=True)
@@ -103,6 +118,16 @@ class OperatorActor:
     on_behalf_of: str | None = None
     via_app: str | None = None
     roles: frozenset[str] = frozenset()
+
+    @property
+    def principal_did(self) -> str:
+        """The authenticated caller: the app when an app acts, else ``did``.
+
+        An app acting for a person is still the principal (REQ-606): event run
+        ids and rate limits are keyed to it, so one app can neither replay nor
+        block another app's events for the same person.
+        """
+        return self.via_app or self.did
 
 
 class WorkflowFieldError(BaseModel):
@@ -130,7 +155,9 @@ class ControlPlaneResult:
     Exactly one of ``value`` / ``errors`` is populated on success/rejection;
     ``conflict``, ``not_found`` and ``forbidden`` are exclusive terminal flags
     (``forbidden``: the control plane refused this actor, e.g. not a gate
-    approver). The route
+    approver). ``unprocessable`` marks ``errors`` as a payload that failed its
+    schema (422) rather than a repairable request (400); ``replayed`` marks a
+    ``value`` as an earlier result returned again (200, not 201). The route
     layer's entire job is translating this into an HTTP status — it never
     decides *whether* a request was valid, only how to report what the
     control plane already decided.
@@ -141,6 +168,8 @@ class ControlPlaneResult:
     conflict: bool = False
     not_found: bool = False
     forbidden: bool = False
+    unprocessable: bool = False
+    replayed: bool = False
 
 
 @runtime_checkable
@@ -204,6 +233,22 @@ class WorkflowControlPlane(Protocol):
         self, workflow_id: str, run_input: dict[str, Any], *, actor: OperatorActor
     ) -> ControlPlaneResult:
         """Start a run of a signed definition."""
+        ...
+
+    async def fire_event(
+        self,
+        workflow_id: str,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Start (or replay) the run a declared event names (SPEC-088 COMP-007).
+
+        ``replayed`` is set when the same principal sent this key and payload
+        before; the same key with another payload is a ``conflict``.
+        """
         ...
 
     async def cancel_run(self, run_id: str, *, actor: OperatorActor) -> ControlPlaneResult:
@@ -312,12 +357,15 @@ class GateControlPlane(Protocol):
         decision: str,
         notes: str,
         actor: OperatorActor,
+        payload: dict[str, Any] | None = None,
     ) -> ControlPlaneResult:
         """Resolve a pending gate task with the reviewer's decision.
 
-        ``decision`` is one of :data:`GateDecision` — typed as plain ``str``
-        here because membership validation is the control plane's job, not
-        this route's; arcui relays whatever the reviewer chose verbatim.
+        ``decision`` is one of :data:`GateDecision` (or ``submit`` for a
+        human_input step) — typed as plain ``str`` here because membership
+        validation is the control plane's job, not this route's; arcui relays
+        whatever the reviewer chose verbatim. ``payload`` is the typed data an
+        approve or submit carries, validated by the control plane.
         """
         ...
 
@@ -330,8 +378,10 @@ def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
 
 
-def _errors_response(errors: list[WorkflowFieldError]) -> JSONResponse:
-    return JSONResponse({"errors": [e.model_dump(mode="json") for e in errors]}, status_code=400)
+def _errors_response(errors: list[WorkflowFieldError], status: int = 400) -> JSONResponse:
+    return JSONResponse(
+        {"errors": [e.model_dump(mode="json") for e in errors]}, status_code=status
+    )
 
 
 def _is_operator(request: Request) -> bool:
@@ -425,9 +475,9 @@ def _relay(
             target=target,
             operation=operation,
             outcome="denied",
-            detail="validation_error",
+            detail="invalid_payload" if result.unprocessable else "validation_error",
         )
-        return _errors_response(result.errors)
+        return _errors_response(result.errors, 422 if result.unprocessable else 400)
     emit_mutation_audit(
         request, target=target, operation=operation, outcome="applied", detail=applied_detail
     )
@@ -611,6 +661,106 @@ async def run_workflow(request: Request) -> JSONResponse:
     return _relay(request, result, target=target, operation="workflow.run", ok_status=201)
 
 
+async def fire_event(request: Request) -> JSONResponse:
+    """POST /api/workflows/{id}/events/{name} — start a run from a declared event.
+
+    Operator, or an app holding ``workflows:event`` on the workflow's owner
+    agent (SPEC-088 COMP-011). In order, each refusal audited: scope (403),
+    the per-(principal, workflow) limit (429), a body over 64 KiB (413, before
+    any JSON parse), a missing ``Idempotency-Key`` or a body that is not a
+    JSON object (400). The control plane decides the rest: 201 for a new run,
+    200 for a replay of the same key and payload, 404 for an unknown workflow
+    or event, 409 for the same key with another payload, 422 naming every
+    failing payload field. The run id derives from the principal (the app,
+    when an app acts for a person), never from the person (REQ-606).
+    """
+    workflow_id = request.path_params["id"]
+    target = f"workflow:{workflow_id}/event:{request.path_params['name']}"
+    plane = _control_plane(request)
+
+    async def _owner() -> str | None:
+        if plane is None:
+            return None
+        return await _owner_did_of(request, await plane.workflow_owner_handle(workflow_id))
+
+    denial = await app_target_refusal(
+        request, Scope.WORKFLOWS_EVENT, _owner, target=target, operation=EVENT_OPERATION
+    )
+    if denial is not None:
+        return denial
+    limiter: PrincipalRateLimiter | None = getattr(
+        request.app.state, "workflow_event_limiter", None
+    )
+    if plane is None or limiter is None:
+        return _error("workflow_control_plane_unavailable", 503)
+
+    actor = _actor(request)
+    if not limiter.allow(json.dumps([actor.principal_did, workflow_id])):
+        return _refused(request, target, EVENT_OPERATION, "rate_limited", 429)
+    raw = await _capped_body(request, PAYLOAD_CAP_BYTES)
+    if raw is None:
+        return _refused(request, target, EVENT_OPERATION, "payload_too_large", 413)
+    key = request.headers.get(IDEMPOTENCY_HEADER, "").strip()
+    if not key:
+        return _refused(request, target, EVENT_OPERATION, "idempotency_key_required", 400)
+    payload = _json_object(raw)
+    if payload is None:
+        return _refused(request, target, EVENT_OPERATION, "expected a JSON object body", 400)
+
+    result = await plane.fire_event(
+        workflow_id, request.path_params["name"], payload, idempotency_key=key, actor=actor
+    )
+    return _relay(
+        request,
+        result,
+        target=target,
+        operation=EVENT_OPERATION,
+        ok_status=200 if result.replayed else 201,
+    )
+
+
+def _refused(
+    request: Request, target: str, operation: str, reason: str, status: int
+) -> JSONResponse:
+    """One audited refusal of a request the caller was allowed to make but sent badly."""
+    emit_mutation_audit(
+        request, target=target, operation=operation, outcome="denied", detail=reason
+    )
+    return _error(reason, status)
+
+
+async def _capped_body(request: Request, cap: int) -> bytes | None:
+    """The request body, or ``None`` once it is over ``cap`` bytes.
+
+    The declared ``Content-Length`` is checked first, then the stream itself is
+    counted as it arrives, so a lying or absent ``Content-Length`` cannot slip
+    a larger body past the cap. Nothing past the cap is buffered or parsed.
+    """
+    declared = request.headers.get("content-length", "")
+    if declared.isdigit() and int(declared) > cap:
+        return None
+    received = bytearray()
+    async for chunk in request.stream():
+        received += chunk
+        if len(received) > cap:
+            return None
+    return bytes(received)
+
+
+def _json_object(raw: bytes) -> dict[str, Any] | None:
+    """``raw`` parsed as a JSON object; ``None`` when it is not one."""
+    try:
+        parsed = json.loads(raw)
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError both subclass it
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _payload_bytes(payload: dict[str, Any]) -> int:
+    """A payload's size as the control plane's schema check measures it."""
+    return len(json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode())
+
+
 async def list_runs(request: Request) -> JSONResponse:
     """GET /api/workflows/{id}/runs — run history for a definition (operator only)."""
     workflow_id = request.path_params["id"]
@@ -724,12 +874,16 @@ async def _accept_side_effect_repeat(request: Request) -> bool | None:
 
 
 async def resolve_gate(request: Request) -> Response:
-    """POST /api/workflow-tasks/{id}/gate — resolve a gate node.
+    """POST /api/workflow-tasks/{id}/gate — resolve a gate or human_input node.
 
-    Body: ``{"decision": "approve"|"fail_run"|"return_for_revision", "notes"?:
-    str}``. No agent-callable tool reaches this operation (REQ-246) — only
-    this HTTP route and the equivalent CLI/channel-card caller of the same
-    control-plane method. Who may decide: :func:`admit_gate_decider`.
+    Body: ``{"decision": "approve"|"fail_run"|"return_for_revision"|"submit",
+    "notes"?: str, "payload"?: object}``. A payload over 64 KiB is 413; a
+    payload that is not an object, or fails the step's schema, is 422 with one
+    issue per field and the row keeps waiting. No agent-callable tool reaches
+    this operation (REQ-246) — only this HTTP route and the equivalent
+    CLI/channel-card caller of the same control-plane method. Who may decide:
+    :func:`admit_gate_decider`; the decision records the acting person as
+    ``decided_by`` and, when an app relayed it, that person as ``on_behalf_of``.
     """
     task_id = request.path_params["id"]
     target = f"workflow_task:{task_id}"
@@ -737,16 +891,27 @@ async def resolve_gate(request: Request) -> Response:
     if isinstance(admitted, Response):
         return admitted
 
-    body = await _json_body(request)
-    decision = (body or {}).get("decision")
+    raw = await _capped_body(request, _GATE_BODY_CAP_BYTES)
+    if raw is None:
+        return _refused(request, target, GATE_OPERATION, "payload_too_large", 413)
+    body = _json_object(raw) or {}
+    decision = body.get("decision")
     if not isinstance(decision, str) or not decision:
         return _error('expected {"decision": "approve"|"fail_run"|"return_for_revision"}', 400)
-    notes = (body or {}).get("notes", "")
+    notes = body.get("notes", "")
     if not isinstance(notes, str):
         return _error("notes must be a string", 400)
+    payload = body.get("payload")
+    if payload is not None and not isinstance(payload, dict):
+        # The wire shape, not the schema: the control plane takes an object.
+        issue = WorkflowFieldError(node_id="", field="payload", error="must be a JSON object")
+        result = ControlPlaneResult(errors=[issue], unprocessable=True)
+        return _relay(request, result, target=target, operation=GATE_OPERATION, ok_status=200)
+    if payload is not None and _payload_bytes(payload) > PAYLOAD_CAP_BYTES:
+        return _refused(request, target, GATE_OPERATION, "payload_too_large", 413)
 
     result = await admitted.plane.resolve_gate(
-        task_id, decision=decision, notes=notes, actor=admitted.actor
+        task_id, decision=decision, notes=notes, actor=admitted.actor, payload=payload
     )
     return _relay(request, result, target=target, operation=GATE_OPERATION, ok_status=200)
 
@@ -1000,6 +1165,7 @@ routes = [
     Route("/api/workflows/{id}/archive", archive_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/unarchive", unarchive_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/run", run_workflow, methods=["POST"]),
+    Route("/api/workflows/{id}/events/{name}", fire_event, methods=["POST"]),
     Route("/api/workflows/{id}/test-run", test_run_workflow, methods=["POST"]),
     Route("/api/workflows/{id}/runs", list_runs, methods=["GET"]),
     Route("/api/workflow-runs/{id}", get_run, methods=["GET"]),
@@ -1035,6 +1201,7 @@ __all__ = [
     "cancel_run",
     "create_from_template",
     "create_workflow",
+    "fire_event",
     "get_run",
     "get_workflow",
     "list_runs",

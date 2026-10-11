@@ -78,6 +78,15 @@ EXPECTED_APP_ROUTES = {
     ("POST", "/api/tasks/{id:path}/reject"),
     ("POST", "/api/team/tasks"),
     ("POST", "/api/agents/{id}/inbox"),
+    # SPEC-088 work intake and events.
+    ("POST", "/api/runs"),
+    ("GET", "/api/runs/{run_id}"),
+    ("GET", "/api/runs/{run_id}/audit"),
+    ("GET", "/api/runs/{run_id}/recalls"),
+    ("POST", "/api/workflows/{id}/events/{name}"),
+    ("GET", "/api/work-events/stream"),
+    ("GET", "/api/work-events"),
+    ("GET", "/api/work-events/keys"),
 }
 
 _PARAM = re.compile(r"\{[A-Za-z_]+(?::[a-z]+)?\}")

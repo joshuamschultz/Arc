@@ -23,8 +23,9 @@ import httpx
 from arctrust import AuditEvent, AuditSink, UserStore
 from arctrust.authority import AccountAuthority, AccountAuthorityError, open_account_authority
 from arctrust.authority_config import DeploymentAuthorityConfig
+from arctrust.callback_allowlist import CallbackAllowlistStore
 from arctrust.identity import did_from_public_key
-from arctrust.principals import PrincipalStore
+from arctrust.principals import PrincipalStore, Tier
 from arctrust.transit_cipher import TransitUnavailableError
 from arctrust.users import default_users_path
 from arctrust.vault_anchor import VaultKVAnchor
@@ -37,8 +38,14 @@ _logger = logging.getLogger(__name__)
 _MAX_FILE = 65_536
 _ACCOUNT_CAPABILITIES = (Capability.ISSUER, Capability.CIPHER, Capability.ANCHOR)
 # Authority records enrollment may leave a single-use bootstrap marker for.
-AUTHORITY_RECORDS = ("users", "principals")
+AUTHORITY_RECORDS = ("users", "principals", "callbacks")
 _ACTOR_ACTIONS = frozenset(f"{record}.mutate" for record in AUTHORITY_RECORDS)
+
+_TIERS: dict[str, Tier] = {
+    "personal": "personal",
+    "enterprise": "enterprise",
+    "federal": "federal",
+}
 
 _StoreT = TypeVar("_StoreT")
 
@@ -250,6 +257,13 @@ class _AuthorityFactory:
         """The app-principal store, bound to the same authority as the users store."""
         return self._bind(lambda authority: authority.principal_store(self._proof))
 
+    def callbacks(self) -> CallbackAllowlistStore:
+        """The callback-origin allowlist, bound to the same authority at the deployment tier."""
+        tier = deployment_tier()
+        return self._bind(
+            lambda authority: authority.callback_allowlist_store(self._proof, tier=tier)
+        )
+
     def _bind(self, open_store: Callable[[AccountAuthority], _StoreT]) -> _StoreT:
         authority = self._current()
         try:
@@ -368,6 +382,16 @@ def accounts_config() -> Any | None:
         ) from exc
 
 
+def deployment_tier() -> Tier:
+    """The machine ``[security].tier``; anything but personal/enterprise/federal fails closed."""
+    from arccli.commands.operator import _machine_security
+
+    tier = _TIERS.get(str(_machine_security().tier))
+    if tier is None:
+        raise AccountsConfigError("[security].tier is not personal, enterprise or federal")
+    return tier
+
+
 def build_user_store_factory(
     audit_sink: AuditSink, *, users_path: Path | None = None
 ) -> Callable[[], UserStore] | None:
@@ -391,5 +415,6 @@ __all__ = [
     "AccountsConfigError",
     "bootstrap_marker_path",
     "build_user_store_factory",
+    "deployment_tier",
     "read_private_file",
 ]

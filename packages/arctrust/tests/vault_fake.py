@@ -114,6 +114,8 @@ class FakeVaultState:
     token_born: dict[str, float] = field(default_factory=dict)
     calls: list[str] = field(default_factory=list)
     keys: dict[str, _Key] = field(default_factory=dict)
+    #: Every ``POST /v1/<mount>/keys/<name>`` body, in order (key creation requests).
+    created: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -238,6 +240,8 @@ class _Handler(BaseHTTPRequestHandler):
         if len(parts) != 5 or parts[2] != self.server.mount:
             return self._error(404, "no handler")
         op, name = parts[3], parts[4]
+        if op == "keys" and method == "POST":
+            return self._create_key(name, body)
         key = self.server.state.keys.get(name)
         if key is None:
             return self._error(400, "encryption key not found")
@@ -253,6 +257,28 @@ class _Handler(BaseHTTPRequestHandler):
             version = self.server.state.sign_version
             data["signature"] = data["signature"].replace("vault:v1:", f"vault:v{version}:")
         self._reply(200, {"data": data})
+
+    _CREATE_FIELDS = frozenset(
+        {"type", "derived", "exportable", "allow_plaintext_backup", "convergent_encryption"}
+    )
+    _KEY_TYPES = frozenset({"aes256-gcm96", "ed25519", "ecdsa-p256"})
+
+    def _create_key(self, name: str, body: dict[str, Any]) -> None:
+        """Create a key as Vault does: records the request; an existing key is left unchanged."""
+        state = self.server.state
+        with state.lock:
+            state.created.append((name, dict(body)))
+        if not set(body) <= self._CREATE_FIELDS or body.get("type") not in self._KEY_TYPES:
+            return self._error(400, "unexpected request")
+        if name not in state.keys:
+            self.server.vault.add_key(
+                name,
+                str(body["type"]),
+                exportable=bool(body.get("exportable", False)),
+                derived=bool(body.get("derived", False)),
+                allow_plaintext_backup=bool(body.get("allow_plaintext_backup", False)),
+            )
+        self._reply(200, {"data": self._metadata(name, state.keys[name])})
 
     @staticmethod
     def _metadata(name: str, key: _Key) -> dict[str, Any]:
@@ -325,6 +351,7 @@ class _Server(ThreadingHTTPServer):
         super().__init__(("127.0.0.1", 0), _Handler)
         self.state = state
         self.mount = mount
+        self.vault: FakeVault
 
 
 class FakeVault:
@@ -336,6 +363,7 @@ class FakeVault:
         self.state = FakeVaultState(namespace=namespace)
         self.mount = mount
         self._server = _Server(self.state, mount)
+        self._server.vault = self
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(cert, key)
         self._server.socket = context.wrap_socket(self._server.socket, server_side=True)

@@ -204,10 +204,16 @@ class RoleRoster(Protocol):
     Run start checks a gate's ``role:<name>`` approvers against
     :meth:`declared_roles`; a surface resolving a gate for a chat user asks
     :meth:`roles_of` for that user's registered roles, never the message.
+    Run start also asks :meth:`is_user` whether an ``escalate_to`` DID is an
+    active human user — an agent is never one — and checks an escalation
+    ``role:<name>`` against :meth:`user_roles`, the roles such users hold
+    (REQ-622). Approver roles stay checked against :meth:`declared_roles`.
     """
 
     async def declared_roles(self) -> frozenset[str]: ...
     async def roles_of(self, did: str) -> frozenset[str]: ...
+    async def is_user(self, did: str) -> bool: ...
+    async def user_roles(self) -> frozenset[str]: ...
 
 
 class InputSchemaSpec(Protocol):

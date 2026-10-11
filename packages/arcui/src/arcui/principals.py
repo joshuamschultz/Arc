@@ -208,6 +208,19 @@ APP_ROUTES: tuple[AppRoute, ...] = (
         Scope.INBOX_SEND,
         agent_from_path=_agent_label,
     ),
+    # SPEC-088 work intake and events. No agent is named in these paths, so the
+    # middleware does no scope check; each handler resolves its agent (request
+    # body, intake row, run trace, bundle owner, ``agent`` query) and calls
+    # ``require_scope`` itself. ``GET /api/runs`` (list) and every
+    # ``/api/work-events/callbacks`` route have no row: apps are refused there.
+    AppRoute("POST", re.compile(r"/api/runs"), None),
+    AppRoute("GET", re.compile(r"/api/runs/[^/]+"), None),
+    AppRoute("GET", re.compile(r"/api/runs/[^/]+/audit"), Scope.RUNS_READ),
+    AppRoute("GET", re.compile(r"/api/runs/[^/]+/recalls"), Scope.RUNS_READ),
+    AppRoute("POST", re.compile(r"/api/workflows/[^/]+/events/[^/]+"), None),
+    AppRoute("GET", re.compile(r"/api/work-events/stream"), None),
+    AppRoute("GET", re.compile(r"/api/work-events"), None),
+    AppRoute("GET", re.compile(r"/api/work-events/keys"), None),
 )
 
 HARD_DENIED_PREFIXES: tuple[str, ...] = (
@@ -626,6 +639,7 @@ __all__ = [
     "PrincipalsConfig",
     "RequestPrincipal",
     "Scope",
+    "Tier",
     "authenticate_principal",
     "is_hard_denied",
     "is_principal_request",
