@@ -131,25 +131,33 @@ def _refused(issue: OperationIssue) -> ControlPlaneResult:
     return ControlPlaneResult(ok=False, errors=(issue,))
 
 
+class _UnreadableSchema:
+    """A signed node declares a payload schema that could not be read."""
+
+
+_UNREADABLE = _UnreadableSchema()
+
+
 def _admitted_payload(
-    metadata: Mapping[str, Any], decision: Decision, payload: Mapping[str, Any] | None
+    schema: Mapping[str, Any] | _UnreadableSchema | None,
+    decision: Decision,
+    payload: Mapping[str, Any] | None,
 ) -> tuple[dict[str, Any], tuple[OperationIssue, ...]]:
     """The payload a decision records, or the ``invalid_payload`` issues refusing it.
 
     Only ``approved`` / ``submitted`` carry data; the other outcomes record
-    ``{}``. The schema is the object the runner stamped from the verified bundle
-    (the control plane never reads bundle files). A row whose node declared a
-    schema but carries none is refused, never waved through.
+    ``{}``. ``schema`` is the signed node's, read from the run's pinned bundle
+    (``None`` when the node declares none); the row's stamped copy is display
+    only and never consulted here. An unreadable schema refuses every payload.
     """
     if decision not in DATA_DECISIONS:
         return {}, ()
     instance: Any = {} if payload is None else payload
-    schema = metadata.get("output_schema_resolved")
     refusal = None
     if not isinstance(instance, Mapping):
         refusal = "payload must be a JSON object"
-    elif metadata.get("output_schema") is not None and not isinstance(schema, Mapping):
-        refusal = "the step's payload schema is not on its row"
+    elif isinstance(schema, _UnreadableSchema):
+        refusal = "the step's payload schema cannot be read"
     if refusal is not None:
         return {}, (OperationIssue(None, "payload", refusal, code="invalid_payload"),)
     found = check(instance, schema if isinstance(schema, Mapping) else OPEN_PAYLOAD_SCHEMA)
@@ -579,13 +587,13 @@ class WorkflowControlPlane:
         identity, never anything the decider typed. Anyone else gets
         :class:`GateNotAuthorizedError` and an audited ``workflow.gate.denied``.
 
-        ``approve`` / ``submit`` carry ``payload``, validated against the schema
-        the runner stamped on the row (``output_schema_resolved``) and capped at
-        64 KiB; a refusal is an ``invalid_payload`` issue and the row keeps
-        waiting. The outcome envelope (D-844) and the status land in ONE
-        conditional write on ``status == review``, so a step decides once: a
-        second decision, or one racing a passed deadline, finds nothing to
-        update and is refused.
+        ``approve`` / ``submit`` carry ``payload``, validated against the signed
+        node's schema, read from the run's pinned bundle (never the row's stamped
+        copy, which is display only), and capped at 64 KiB; a refusal is an
+        ``invalid_payload`` issue and the row keeps waiting. The outcome envelope
+        (D-844) and the status land in ONE conditional write on
+        ``status == review``, so a step decides once: a second decision, or one
+        racing a passed deadline, finds nothing to update and is refused.
 
         Gate resolution exists only here (REQ-246). No agent-callable tool
         reaches it; the dashboard route, the CLI, and the channel card are all
@@ -624,7 +632,9 @@ class WorkflowControlPlane:
                 )
             )
         recorded = allowed[decision]
-        accepted, issues = _admitted_payload(task.metadata, recorded, payload)
+        accepted, issues = _admitted_payload(
+            await self._payload_schema(task, recorded), recorded, payload
+        )
         if issues:
             self._emit(
                 _Operation("workflow.gate.resolved", task_id, "invalid_payload"), decider_did
@@ -857,6 +867,18 @@ class WorkflowControlPlane:
             actor_did,
         )
         raise GateNotAuthorizedError(task.id, actor_did)
+
+    async def _payload_schema(
+        self, task: Any, decision: Decision
+    ) -> Mapping[str, Any] | _UnreadableSchema | None:
+        """The signed node's payload schema; an unreadable one refuses (fail closed)."""
+        if decision not in DATA_DECISIONS:
+            return None
+        try:
+            return await self._runner.gate_payload_schema(task)
+        except Exception:  # reason: an unreadable schema must refuse, never open the step
+            logger.warning("gate %s: payload schema unreadable; refusing", task.id, exc_info=True)
+            return _UNREADABLE
 
     def _emit(self, operation: _Operation, actor_did: str) -> None:
         emit(

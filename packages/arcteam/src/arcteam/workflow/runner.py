@@ -80,7 +80,7 @@ from .runner_contracts import (
     WorkflowTaskStoreLike,
 )
 from .runner_state import NodeInstance, RunState, derive_node_states
-from .schema_check import SchemaRefusedError
+from .schema_check import SchemaRefusedError, load_schema
 from .stores import RunStateMissingError
 from .validator import approver_roles, check_gate_roles
 
@@ -432,6 +432,34 @@ class WorkflowRunner:
         Raises:
             WorkflowRunError: the row, run, or definition does not line up.
         """
+        step, _run = await self._pinned_step(task)
+        escalated = task.metadata.get("escalated_to")
+        if step.escalate_to is not None and escalated == step.escalate_to:
+            return (*step.approvers, step.escalate_to)
+        return tuple(step.approvers)
+
+    async def gate_payload_schema(self, task: Task) -> dict[str, Any] | None:
+        """The payload schema of human-step row ``task``, read from the PINNED bundle.
+
+        Never from the row, for the reason :meth:`gate_approvers` gives: the
+        schema decides what a decision may carry, so a row stripped of its
+        stamped copy must not open the step to any payload. ``None`` only when
+        the signed node declares no schema.
+
+        Raises:
+            WorkflowRunError: the row, run, or definition does not line up.
+            SchemaRefusedError: the declared schema cannot be loaded.
+        """
+        step, run = await self._pinned_step(task)
+        if step.output_schema is None:
+            return None
+        root = self._bundle_root(run.workflow_id)
+        if not root:
+            raise SchemaRefusedError(f"schema {step.output_schema!r}: the bundle root is unknown")
+        return load_schema(Path(root), step.output_schema)
+
+    async def _pinned_step(self, task: Task) -> tuple[HumanStepSpec, RunRecord]:
+        """The signed human-step node row ``task`` claims, from the run's pinned bundle."""
         run_id = str(task.metadata.get("flow_run_id", ""))
         node_id = str(task.metadata.get("node_id", ""))
         iteration = int(task.metadata.get("iteration", -1))
@@ -444,11 +472,7 @@ class WorkflowRunner:
         node = bundle.definition.node_by_id(node_id)
         if node.kind not in HUMAN_STEP_KINDS:
             raise WorkflowRunError(f"node {node_id!r} is not a gate")
-        step = cast(HumanStepSpec, node)
-        escalated = task.metadata.get("escalated_to")
-        if step.escalate_to is not None and escalated == step.escalate_to:
-            return (*step.approvers, step.escalate_to)
-        return tuple(step.approvers)
+        return cast(HumanStepSpec, node), run
 
     async def _refuse_undeclared_gate_roles(
         self, definition: WorkflowSpec, initiator_did: str
