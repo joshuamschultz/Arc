@@ -301,7 +301,21 @@ def run_status(task: Task) -> str:
 async def _start(request: Request) -> JSONResponse:
     key = _idempotency_key(request)
     body = _parse(await _read_json(request))
-    agent_did, agent_root = await _resolve_agent(request, body.agent)
+    try:
+        agent_did, agent_root = await _resolve_agent(request, body.agent)
+    except _IntakeRefusedError:
+        # Scope before existence: an app not allowed to start the named agent
+        # gets the same 403 whether or not that agent is in the roster.
+        denial = control_refusal(
+            request,
+            Scope.RUNS_START,
+            body.agent,
+            target=f"agent:{body.agent}",
+            operation=INTAKE_OPERATION,
+        )
+        if denial is not None:
+            return denial
+        raise
     denial = control_refusal(
         request,
         Scope.RUNS_START,

@@ -658,6 +658,18 @@ class TestRefusals:
         assert resp.status_code == 403, resp.text
         _assert_refused_without_record(rig, mark)
 
+    def test_out_of_scope_app_cannot_tell_a_missing_agent_from_a_real_one(self, rig: Rig) -> None:
+        """An app without scope on an agent learns nothing about whether it exists."""
+        rig.as_app({Scope.RUNS_START: (BOB,)})
+
+        real = rig.post({"agent": "olivia", "task": "t"})
+        mark = rig.mark()
+        missing = rig.post({"agent": "nobody", "task": "t"}, key="key-2")
+
+        assert missing.status_code == real.status_code == 403, missing.text
+        assert missing.json() == real.json()
+        _assert_refused_without_record(rig, mark)
+
     def test_denial_for_app_acting_for_person_names_both(self, rig: Rig) -> None:
         app = rig.as_app({}, on_behalf_of=PERSON, person_roles=(OPERATOR,))
         mark = rig.mark()

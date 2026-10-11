@@ -196,6 +196,21 @@ class TestWrongScopeEveryRoute:
 
         assert await attack.tasks() == []
 
+    async def test_post_runs_probing_a_missing_agent_is_refused_the_same(
+        self, attack: Attack
+    ) -> None:
+        """No roster oracle: a missing agent answers exactly like an unscoped real one."""
+        headers = attack.wrong_scope(Scope.RUNS_START)
+
+        await _one_refusal(
+            attack,
+            lambda: attack.intake({"agent": "no-such-agent", "task": "probe"}, headers),
+            status=403,
+            error="scope_denied",
+        )
+
+        assert await attack.tasks() == []
+
     @pytest.mark.parametrize("suffix", ["", "/timeline", "/audit", "/recalls"])
     async def test_run_reads_without_runs_read_on_the_agent_are_404(
         self, attack: Attack, suffix: str
