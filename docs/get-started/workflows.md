@@ -139,7 +139,7 @@ Key fields:
   failed; not allowed on a gate or router), or `skip_dependents` (descendants are
   `skipped` with the reason and the run ends `done_with_failures`).
 - **Node kinds** — `agent` (a bounded agent run with a file-referenced `prompt`),
-  `tool`, `script`, `router`, `gate`.
+  `tool`, `script`, `router`, `gate`, `human_input`.
 - **`deliver_to`** — the important one for scheduled work. A cron run arrives on
   **no** channel, so a node's `notify_user` would fall back to whatever chat the
   operator last used — often the wrong one. Pinning `deliver_to =
@@ -202,6 +202,116 @@ plus each prompt or schema file).
 Every `arc workflow` verb takes `--dir` to point at a config directory other than
 the default. Validation runs inside `create`/`edit`, so there's no separate
 `validate` verb.
+
+### Events: start a run from outside
+
+An outside app can start a run by firing a named event. The workflow declares each
+event in the signed document:
+
+```toml
+[[event]]
+name = "ticket_opened"
+schema = "schemas/ticket_opened.json"   # a JSON Schema file in the bundle
+```
+
+- **`name`** matches `^[a-z][a-z0-9_]{0,63}$`. It is part of the URL, so it is
+  never a path. Two events may not share a name.
+- **`schema`** is a file in the workflow bundle. The event payload must pass it
+  before a run exists. A payload that fails gets a 422 that names every bad field.
+- **At most 32** `[[event]]` tables per workflow.
+- **Signed with the bundle.** The event names and their schema files are part of
+  the signed content. Change one and you must sign again. A workflow with no
+  events signs exactly as before.
+- **Fire it** with `POST /api/workflows/{id}/events/{name}`. See
+  [Work intake and events API](../reference/work-intake-api.md#fire-a-workflow-event).
+
+An event the signed document does not declare is refused. The run input always
+carries a reserved key, `arc_trigger`, set by the runner:
+`{"kind": "manual" | "cron" | "interval" | "event", "name": <event name or null>}`.
+A caller that sends `arc_trigger` is refused, not overwritten. No input or event
+schema may claim that key.
+
+### Human steps: `gate` and `human_input`
+
+Both nodes stop the run until a person acts. Neither can be resolved by a tool.
+Only the control plane resolves them: the HTTP route, the CLI, the dashboard, or a
+chat card.
+
+```toml
+[[node]]
+id = "review"
+kind = "gate"
+gate = "refund-approval"
+needs = ["draft"]
+approvers = ["role:finance"]        # DIDs, or role:<name>. Empty means operator only.
+output_schema = "schemas/review.json"   # optional: the payload an approver sends
+timeout_s = 3600
+on_timeout = "escalate"
+escalate_to = "role:finance_lead"
+
+[[node]]
+id = "ask"
+kind = "human_input"
+prompt = "Which region should we ship from?"   # 1 to 4000 characters
+output_schema = "schemas/region.json"          # required
+approvers = ["role:ops"]
+```
+
+`human_input` fields:
+
+- **`prompt`** is what the person sees.
+- **`output_schema`** is required. The person's answer must pass it.
+- **`approvers`** works as on a gate.
+
+Decisions the route accepts:
+
+| Node | Decision words |
+|---|---|
+| `gate` | `approve`, `fail_run`, `return_for_revision` |
+| `human_input` | `submit`, `fail_run` |
+
+A gate may also set `output_schema`. Then the `approve` call carries a `payload`
+that must pass the schema. A payload over 64 KiB is refused with 413. A bad payload
+is a 422 with one issue per field, and the node keeps waiting.
+
+#### The output envelope
+
+A settled human step writes one `output` with exactly these keys:
+
+| Key | Meaning |
+|---|---|
+| `decision` | `approved`, `rejected`, `returned_for_revision`, or `submitted` |
+| `notes` | The text the person sent. May be empty |
+| `payload` | The checked answer. `{}` for a decision that carries none |
+| `decided_by` | The DID of who decided. The runner itself, on a timeout |
+| `on_behalf_of` | The person, when an app relayed the call. Else `null` |
+| `decided_at` | ISO 8601 time |
+| `timed_out` | `true` when a passed deadline settled the step |
+
+Later nodes read a field with `$nodes.<id>.output.payload.<field>`. The runner reads
+the decision from the same envelope. There is no second copy.
+
+#### Timeouts
+
+| Field | Meaning |
+|---|---|
+| `timeout_s` | Seconds to wait. Must be above 0. Stamped as an absolute deadline when the node starts waiting |
+| `on_timeout` | `fail` (default), `continue`, or `escalate`. `continue` and `escalate` need `timeout_s` |
+| `escalate_to` | Required with `escalate`, and allowed only then |
+
+What a passed deadline does:
+
+- **`fail`** — the node fails with decision `rejected`. The run follows `on_failure`.
+- **`continue`** — the node finishes as `approved` (gate) or `submitted`
+  (`human_input`), with `payload = {}`. So `{}` must pass the `output_schema`.
+  Validation refuses the document if it does not.
+- **`escalate`** — one escalation step. At the first deadline, `escalate_to` is
+  added as an approver and a new deadline starts. A card goes out and a
+  `gate.escalated` work event is written. At the second deadline the node fails.
+
+`escalate_to` must be a **human user DID** or `role:<name>` held by at least one
+user. An agent DID is refused. A role held only by agents is refused. A decision and
+a timeout racing each other cannot both win: exactly one is recorded.
 
 ### What survives a crash
 

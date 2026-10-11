@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { AppWindow, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { CallbackOriginsPanel } from '@/components/callback-origins-panel'
 import { CopyButton } from '@/components/copy-button'
 import { EmptyState, ErrorState, LoadingRows } from '@/components/states'
 import { ApiError } from '@/lib/api'
@@ -413,6 +414,9 @@ export function AppsPanel() {
           ))}
         </ul>
       )}
+      <div className="border-t border-border pt-5">
+        <CallbackOriginsPanel />
+      </div>
     </div>
   )
 }

@@ -82,6 +82,7 @@ from arcui.acting import (
 )
 from arcui.audit import emit_mutation_audit, emit_read_audit
 from arcui.principals import PrincipalRateLimiter, roster_did
+from arcui.request_body import read_capped_body
 from arcui.routes.trust import operator_signer_for_request
 from arcui.schemas import ErrorResponse
 
@@ -697,7 +698,7 @@ async def fire_event(request: Request) -> JSONResponse:
     actor = _actor(request)
     if not limiter.allow(json.dumps([actor.principal_did, workflow_id])):
         return _refused(request, target, EVENT_OPERATION, "rate_limited", 429)
-    raw = await _capped_body(request, PAYLOAD_CAP_BYTES)
+    raw = await read_capped_body(request, PAYLOAD_CAP_BYTES)
     if raw is None:
         return _refused(request, target, EVENT_OPERATION, "payload_too_large", 413)
     key = request.headers.get(IDEMPOTENCY_HEADER, "").strip()
@@ -727,24 +728,6 @@ def _refused(
         request, target=target, operation=operation, outcome="denied", detail=reason
     )
     return _error(reason, status)
-
-
-async def _capped_body(request: Request, cap: int) -> bytes | None:
-    """The request body, or ``None`` once it is over ``cap`` bytes.
-
-    The declared ``Content-Length`` is checked first, then the stream itself is
-    counted as it arrives, so a lying or absent ``Content-Length`` cannot slip
-    a larger body past the cap. Nothing past the cap is buffered or parsed.
-    """
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > cap:
-        return None
-    received = bytearray()
-    async for chunk in request.stream():
-        received += chunk
-        if len(received) > cap:
-            return None
-    return bytes(received)
 
 
 def _json_object(raw: bytes) -> dict[str, Any] | None:
@@ -891,7 +874,7 @@ async def resolve_gate(request: Request) -> Response:
     if isinstance(admitted, Response):
         return admitted
 
-    raw = await _capped_body(request, _GATE_BODY_CAP_BYTES)
+    raw = await read_capped_body(request, _GATE_BODY_CAP_BYTES)
     if raw is None:
         return _refused(request, target, GATE_OPERATION, "payload_too_large", 413)
     body = _json_object(raw) or {}

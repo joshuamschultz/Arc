@@ -15,6 +15,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route
 
 from arcui.audit import emit_mutation_audit, emit_read_audit
+from arcui.request_body import read_capped_body
 
 _MAX_PAGE = 100
 _MAX_BODY = 4096
@@ -88,15 +89,11 @@ async def _body(request: Request) -> dict[str, Any] | None:
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
         return None
     try:
-        if int(request.headers.get("content-length", "0")) > _MAX_BODY:
-            return None
-        chunks = bytearray()
         async with asyncio.timeout(5):
-            async for chunk in request.stream():
-                chunks.extend(chunk)
-                if len(chunks) > _MAX_BODY:
-                    return None
-        payload = json.loads(chunks)
+            raw = await read_capped_body(request, _MAX_BODY)
+        if raw is None:
+            return None
+        payload = json.loads(raw)
     except (ValueError, TypeError, TimeoutError):
         return None
     return payload if isinstance(payload, dict) else None

@@ -1213,7 +1213,7 @@ class WorkflowRunner:
         rows = await self._tasks.query_by_flow_run(run.run_id)
         # A passed human-step deadline settles (or escalates) its row before the
         # state is derived, so this same pass acts on the outcome (D-846).
-        if await self._deadlines.sweep(run, rows, self._clock()):
+        if await self._deadlines.sweep(run, rows, self._clock(), definition):
             rows = await self._tasks.query_by_flow_run(run.run_id)
         state = RunState(rows, run.path_taken)
         scope = state.scope(run.input)

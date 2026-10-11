@@ -1059,9 +1059,17 @@ export interface WorkflowMigration {
   reason: string
 }
 
+/** An event the workflow declares: firing it starts a run (SPEC-088 REQ-610). */
+export interface WorkflowEvent {
+  name: string
+  /** Bundle path of the payload schema, when the event declares one. */
+  schema?: string | null
+}
+
 export interface WorkflowDetail extends WorkflowSummary {
   nodes: WorkflowNode[]
   edges: WorkflowEdge[]
+  events?: WorkflowEvent[]
   /** The agent handle that owns the workflow; nodes without an `agent` run as it. */
   owner?: string | null
   channel?: string | null
@@ -1117,6 +1125,10 @@ export interface WorkflowRunNodeStatus {
   task_run_id?: string | null
   /** The row a gate is resolved by — present on a node that has one. */
   task_id?: string | null
+  /** A waiting gate / human_input step: the payload schema from the signed bundle. */
+  output_schema_resolved?: Record<string, unknown> | null
+  /** A waiting human_input step: what it asks the person. */
+  prompt?: string | null
   kind?: string | null
   owner_did?: string | null
   started_at?: string | null
@@ -1157,7 +1169,8 @@ export interface WorkflowRunDetail {
   ended_at?: string | null
 }
 
-export type GateDecision = 'approve' | 'fail_run' | 'return_for_revision'
+/** `submit` resolves a human_input step (SPEC-088 D-845); the rest resolve a gate. */
+export type GateDecision = 'approve' | 'fail_run' | 'return_for_revision' | 'submit'
 
 /** `ApiError.errors` arrives as untyped `Record<string, unknown>[]` (the
  * shared HTTP client has no workflow-specific knowledge); this is the one

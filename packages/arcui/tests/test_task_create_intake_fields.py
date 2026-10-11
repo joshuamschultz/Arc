@@ -197,6 +197,39 @@ class TestMetadataNamespace:
         _refused_with_nothing_created(h, resp, 0)
 
 
+# --- body cap: 64 KiB, counted as it streams --------------------------------------------
+
+OVER_CAP = 65 * 1024
+
+
+class TestBodyCap:
+    def _assert_refused(self, h: Harness, resp: Any) -> None:
+        assert resp.status_code == 413, resp.text[:200]
+        assert h.all_tasks() == [], "an oversized create must write no task"
+        [row] = h.rows("task.create")
+        assert row.outcome == "denied"
+
+    def test_a_65_kib_body_is_413_and_creates_nothing(self, h: Harness) -> None:
+        resp = h.create(metadata={"pad": "x" * OVER_CAP})
+
+        self._assert_refused(h, resp)
+
+    def test_a_streamed_body_without_content_length_is_capped(self, h: Harness) -> None:
+        def chunks() -> Any:
+            yield b'{"title": "t", "metadata": {"pad": "'
+            for _ in range(OVER_CAP // 1024):
+                yield b"x" * 1024
+            yield b'"}}'
+
+        resp = h.client.post(
+            CREATE_PATH,
+            content=chunks(),
+            headers={**h.headers, "Content-Type": "application/json"},
+        )
+
+        self._assert_refused(h, resp)
+
+
 # --- REQ-601: links are validated, nothing is created on refusal ----------------------
 
 

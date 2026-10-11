@@ -33,7 +33,7 @@ from arcteam.workflow.errors import GateNotAuthorizedError, WorkflowError
 from arcteam.workflow.gate_outcome import DECISIONS
 from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
-from arcteam.workflow.runner_contracts import TriggerContext
+from arcteam.workflow.runner_contracts import HUMAN_STEP_KINDS, TriggerContext
 from arctrust import sanitize_error_text
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
@@ -98,6 +98,25 @@ def _node_io(task: Any) -> dict[str, Any]:
     detail["input"] = _bounded({"args": meta.get("args"), "upstream": meta.get("upstream") or {}})
     detail["output"] = _bounded(task.output) if task.output is not None else None
     return detail
+
+
+def _human_step_view(task: Any) -> dict[str, Any]:
+    """What a person needs to decide a waiting gate or human_input step.
+
+    The schema object the runner read from the verified bundle (the gate panel
+    renders a form from it) and a human_input step's prompt. Only while the row
+    waits: a decided step has nothing left to render. Both come from the signed
+    definition, not from run data, so they are shown at every classification.
+    """
+    meta = task.metadata
+    if task.status != "review" or str(meta.get("node_kind", "")) not in HUMAN_STEP_KINDS:
+        return {}
+    view: dict[str, Any] = {}
+    if isinstance(meta.get("output_schema_resolved"), dict):
+        view["output_schema_resolved"] = meta["output_schema_resolved"]
+    if isinstance(meta.get("prompt"), str):
+        view["prompt"] = meta["prompt"]
+    return view
 
 
 #: The durable node-snapshot vocabulary as the dashboard's per-node vocabulary.
@@ -282,6 +301,7 @@ class DashboardWorkflowPlane:
                 "started_at": task.started_at,
                 "completed_at": task.completed_at,
                 **_node_io(task),
+                **_human_step_view(task),
             }
             if node_id in snapshot:
                 nodes[node_id].update(_snapshot_fields(snapshot[node_id]))

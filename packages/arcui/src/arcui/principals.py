@@ -271,7 +271,10 @@ def require_scope(
     to ``agent_did`` (fail closed when no agent is named).
     """
     principal = getattr(request.state, "principal", None)
-    if scope_allowed(principal, scope, agent_did, _config(request).wildcards_allowed):
+    # Wildcard grants exist only for apps; a session's decision never reads the config.
+    is_app_call = principal is not None and principal.kind == "app"
+    wildcards = is_app_call and _config(request).wildcards_allowed
+    if scope_allowed(principal, scope, agent_did, wildcards):
         return None
     emit_mutation_audit(
         request,

@@ -11,6 +11,10 @@ step's ``on_timeout`` once that deadline has passed:
   ``metadata.escalated_to`` and sets one new deadline, then pushes a card and a
   ``gate.escalated`` work event; the second expiry fails.
 
+``on_timeout``, ``timeout_s`` and ``escalate_to`` come from the signed
+definition node, never the row: the row is only the deadline carrier, so a
+forged store write cannot misdirect the alert or block the real escalation.
+
 Every write is ``update_if(where status == review AND metadata.wait_deadline ==
 <the deadline read>)``. A human decision writes on ``status == review``, so a
 decision racing the timeout either lands first (the timeout's write matches
@@ -25,7 +29,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from arcstore.tasks import Task
 from arcstore.workflow_lease import RunnerFence
@@ -33,7 +37,13 @@ from arcstore.workflow_lease import RunnerFence
 from .gate_outcome import CONTINUE_DECISION, outcome_envelope, settled_status
 from .narrator import gate_card_text
 from .run_events import AuditFn, RunEvents
-from .runner_contracts import HUMAN_STEP_KINDS, RunRecord, WorkflowTaskStoreLike
+from .runner_contracts import (
+    HUMAN_STEP_KINDS,
+    HumanStepSpec,
+    RunRecord,
+    WorkflowSpec,
+    WorkflowTaskStoreLike,
+)
 
 TimeoutKind = Literal["fail", "continue", "escalate"]
 
@@ -48,6 +58,16 @@ class TimeoutAction:
     kind: TimeoutKind
     row: Task
     deadline: str
+    step: HumanStepSpec
+
+
+def _signed_step(definition: WorkflowSpec, row: Task) -> HumanStepSpec | None:
+    """The signed human-step node ``row`` was materialized from; None when absent."""
+    try:
+        node = definition.node_by_id(str(row.metadata.get("node_id", "")))
+    except KeyError:
+        return None
+    return cast(HumanStepSpec, node) if node.kind in HUMAN_STEP_KINDS else None
 
 
 def _deadline_of(row: Task) -> datetime | None:
@@ -81,32 +101,40 @@ class GateDeadlines:
         self._fence = fence
 
     @staticmethod
-    def due(row: Task, now: datetime) -> TimeoutAction | None:
+    def due(row: Task, now: datetime, step: HumanStepSpec) -> TimeoutAction | None:
         """The action a passed deadline calls for on ``row``; ``None`` while it holds.
 
-        Only a waiting human-step row with a readable deadline at or before
-        ``now`` is due. An escalation happens once: a row already escalated, or
-        one with no escalation target, fails instead.
+        ``step`` is the signed node the row was materialized from: the only
+        source of ``on_timeout``, ``timeout_s`` and ``escalate_to``. Only a
+        waiting row of a human step that declares ``timeout_s``, with a readable
+        deadline at or before ``now``, is due. An escalation happens once: a row
+        already escalated to the signed target fails instead.
         """
-        waiting = row.status == "review"
-        if not waiting or str(row.metadata.get("node_kind", "")) not in HUMAN_STEP_KINDS:
+        if row.status != "review" or step.kind not in HUMAN_STEP_KINDS or step.timeout_s is None:
             return None
         deadline = _deadline_of(row)
         if deadline is None or now < deadline:
             return None
-        on_timeout = row.metadata.get("on_timeout")
         kind: TimeoutKind = "fail"
-        if on_timeout == "continue":
+        if step.on_timeout == "continue":
             kind = "continue"
-        elif on_timeout == "escalate" and row.metadata.get("escalate_to"):
-            kind = "fail" if row.metadata.get("escalated_to") else "escalate"
-        return TimeoutAction(kind, row, str(row.metadata["wait_deadline"]))
+        elif step.on_timeout == "escalate" and step.escalate_to:
+            already = row.metadata.get("escalated_to") == step.escalate_to
+            kind = "fail" if already else "escalate"
+        return TimeoutAction(kind, row, str(row.metadata["wait_deadline"]), step)
 
-    async def sweep(self, run: RunRecord, rows: Sequence[Task], now: datetime) -> bool:
-        """Apply every due deadline among ``rows``; ``True`` when any row was written."""
+    async def sweep(
+        self, run: RunRecord, rows: Sequence[Task], now: datetime, definition: WorkflowSpec
+    ) -> bool:
+        """Apply every due deadline among ``rows``; ``True`` when any row was written.
+
+        ``definition`` is the run's verified definition; a row whose node it
+        does not declare as a human step has no signed timeout and is left alone.
+        """
         changed = False
         for row in rows:
-            action = self.due(row, now)
+            step = _signed_step(definition, row)
+            action = None if step is None else self.due(row, now, step)
             if action is not None:
                 changed |= await self.apply(run, action, now)
         return changed
@@ -116,8 +144,7 @@ class GateDeadlines:
         if action.kind == "escalate":
             return await self._escalate(run, action, now)
         row = action.row
-        node_kind = str(row.metadata.get("node_kind", ""))
-        decision = CONTINUE_DECISION[node_kind] if action.kind == "continue" else "rejected"
+        decision = CONTINUE_DECISION[action.step.kind] if action.kind == "continue" else "rejected"
         envelope = outcome_envelope(
             decision,
             notes="",
@@ -135,8 +162,9 @@ class GateDeadlines:
 
     async def _escalate(self, run: RunRecord, action: TimeoutAction, now: datetime) -> bool:
         row = action.row
-        target = str(row.metadata["escalate_to"])
-        timeout_s = float(row.metadata.get("timeout_s") or 0)
+        # due() only yields "escalate" for a step with timeout_s and escalate_to.
+        target = str(action.step.escalate_to)
+        timeout_s = float(action.step.timeout_s or 0)
         metadata = {
             **row.metadata,
             "escalated_to": target,
@@ -152,7 +180,7 @@ class GateDeadlines:
             run.run_id,
             node_id,
             row.id,
-            kind=str(row.metadata.get("node_kind", "")),
+            kind=action.step.kind,
             escalated_to=target,
         )
         await self._tell_operator(text, f"workflow-gate:{row.id}:escalated", run)

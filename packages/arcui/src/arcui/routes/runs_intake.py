@@ -42,6 +42,7 @@ from starlette.routing import Route
 from arcui.acting import acting_identity, control_refusal
 from arcui.audit import emit_mutation_audit
 from arcui.principals import Scope, require_scope
+from arcui.request_body import read_capped_body
 
 logger = logging.getLogger(__name__)
 
@@ -194,13 +195,11 @@ def _idempotency_key(request: Request) -> str:
 async def _read_json(request: Request) -> Any:
     if request.headers.get("content-type", "").split(";", 1)[0].strip() != "application/json":
         raise _IntakeRefusedError(400, "invalid_body", "content type is not application/json")
-    chunks = bytearray()
-    async for chunk in request.stream():
-        chunks.extend(chunk)
-        if len(chunks) > MAX_BODY_BYTES:
-            raise _IntakeRefusedError(413, "body_too_large", f"body over {MAX_BODY_BYTES} bytes")
+    raw = await read_capped_body(request, MAX_BODY_BYTES)
+    if raw is None:
+        raise _IntakeRefusedError(413, "body_too_large", f"body over {MAX_BODY_BYTES} bytes")
     try:
-        return json.loads(chunks)
+        return json.loads(raw)
     except ValueError as exc:
         raise _IntakeRefusedError(400, "invalid_body", "body is not JSON") from exc
 

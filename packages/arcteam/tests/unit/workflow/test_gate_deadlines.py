@@ -16,9 +16,10 @@ node's ``on_timeout`` once the deadline has passed:
 Every timeout write is the same conditional ``update_if`` a human decision
 uses, so a race leaves exactly one decision.
 
-The pure decision is ``GateDeadlines.due(row, now) -> TimeoutAction | None``,
-callable on the class (it needs no state); ``TimeoutAction.kind`` names the
-action. Everything else is asserted through the runner's public surface.
+The pure decision is ``GateDeadlines.due(row, now, step) -> TimeoutAction |
+None``, callable on the class (it needs no state); ``step`` is the SIGNED node,
+the only source of ``on_timeout``, ``timeout_s`` and ``escalate_to`` (the row
+only carries the deadline). ``TimeoutAction.kind`` names the action. Everything else is asserted through the runner's public surface.
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from arcteam.workflow.stores import WorkflowTaskStore
 from ._human_steps import (
     ALICE,
     CAROL,
+    MALLORY,
     PLANNER,
     T0,
     TIMEOUT_S,
@@ -52,6 +54,11 @@ def gate_deadlines() -> Any:
     from arcteam.workflow.gate_deadlines import GateDeadlines
 
     return GateDeadlines
+
+
+def signed(h: Harness, node_id: str) -> Any:
+    """The signed definition's node: what ``due`` takes the timeout policy from."""
+    return h.definition.node_by_id(node_id)
 
 
 def harness(backend: Any, tmp_path: Path, definition: Any, **kwargs: Any) -> Harness:
@@ -113,8 +120,9 @@ async def test_due_is_none_before_the_deadline_and_fail_after(
     gate = await h.row(run_id, "approve")
     deadlines = gate_deadlines()
 
-    assert deadlines.due(gate, T0 + timedelta(seconds=TIMEOUT_S - 1)) is None
-    action = deadlines.due(gate, T0 + timedelta(seconds=TIMEOUT_S + 1))
+    step = signed(h, "approve")
+    assert deadlines.due(gate, T0 + timedelta(seconds=TIMEOUT_S - 1), step) is None
+    action = deadlines.due(gate, T0 + timedelta(seconds=TIMEOUT_S + 1), step)
     assert action is not None
     assert action.kind == "fail"
 
@@ -126,7 +134,8 @@ async def test_due_escalates_once_then_fails(backend: Any, tmp_path: Path) -> No
     deadlines = gate_deadlines()
     late = T0 + timedelta(seconds=TIMEOUT_S + 1)
 
-    first = deadlines.due(gate, late)
+    step = signed(h, "approve")
+    first = deadlines.due(gate, late, step)
     assert first is not None and first.kind == "escalate"
 
     escalated = gate.model_copy(
@@ -138,8 +147,8 @@ async def test_due_escalates_once_then_fails(backend: Any, tmp_path: Path) -> No
             }
         }
     )
-    assert deadlines.due(escalated, late) is None
-    second = deadlines.due(escalated, late + timedelta(seconds=TIMEOUT_S + 1))
+    assert deadlines.due(escalated, late, step) is None
+    second = deadlines.due(escalated, late + timedelta(seconds=TIMEOUT_S + 1), step)
     assert second is not None and second.kind == "fail"
 
 
@@ -149,7 +158,7 @@ async def test_due_ignores_a_row_that_is_no_longer_waiting(backend: Any, tmp_pat
     gate = await h.row(run_id, "approve")
     settled = gate.model_copy(update={"status": "done"})
 
-    assert gate_deadlines().due(settled, T0 + timedelta(days=1)) is None
+    assert gate_deadlines().due(settled, T0 + timedelta(days=1), signed(h, "approve")) is None
 
 
 async def test_due_ignores_a_gate_with_no_deadline(backend: Any, tmp_path: Path) -> None:
@@ -158,7 +167,84 @@ async def test_due_ignores_a_gate_with_no_deadline(backend: Any, tmp_path: Path)
     gate = await h.row(run_id, "approve")
 
     assert gate.metadata.get("wait_deadline") is None
-    assert gate_deadlines().due(gate, T0 + timedelta(days=365)) is None
+    assert gate_deadlines().due(gate, T0 + timedelta(days=365), signed(h, "approve")) is None
+
+
+async def _forge_row_metadata(h: Harness, run_id: str, node_id: str, **forged: Any) -> Any:
+    """A store write that rewrites the row's timeout fields (the attacker's reach)."""
+    row = await h.row(run_id, node_id)
+    updated = await h.flow_tasks.update_if(
+        row.id,
+        {"metadata": {**row.metadata, **forged}},
+        where={"status": "review"},
+        actor_did=MALLORY,
+    )
+    assert updated is not None
+    return updated
+
+
+async def test_due_takes_the_timeout_policy_from_the_signed_node_not_the_row(
+    backend: Any, tmp_path: Path
+) -> None:
+    h = harness(backend, tmp_path, escalating_gate())
+    run_id = await h.reach("approve")
+    forged = await _forge_row_metadata(
+        h, run_id, "approve", on_timeout="fail", escalate_to=MALLORY, escalated_to=MALLORY
+    )
+    late = T0 + timedelta(seconds=TIMEOUT_S + 1)
+
+    action = gate_deadlines().due(forged, late, signed(h, "approve"))
+
+    assert action is not None and action.kind == "escalate"
+
+
+async def test_due_ignores_a_forged_continue_on_a_failing_node(
+    backend: Any, tmp_path: Path
+) -> None:
+    h = harness(backend, tmp_path, failing_gate())
+    run_id = await h.reach("approve")
+    forged = await _forge_row_metadata(
+        h, run_id, "approve", on_timeout="continue", escalate_to=MALLORY
+    )
+
+    action = gate_deadlines().due(
+        forged, T0 + timedelta(seconds=TIMEOUT_S + 1), signed(h, "approve")
+    )
+
+    assert action is not None and action.kind == "fail"
+
+
+async def test_a_forged_row_escalation_target_is_ignored_and_the_signed_one_used(
+    backend: Any, tmp_path: Path
+) -> None:
+    h = harness(backend, tmp_path, escalating_gate())
+    run_id = await h.reach("approve")
+    await _forge_row_metadata(
+        h,
+        run_id,
+        "approve",
+        on_timeout="fail",
+        escalate_to=MALLORY,
+        escalated_to=MALLORY,
+        timeout_s=1,
+    )
+    cards_before = len(h.notifier.notices)
+
+    h.clock.advance(TIMEOUT_S + 1)
+    escalated_at = h.clock.now
+    await h.runner.advance(run_id)
+
+    gate = await h.row(run_id, "approve")
+    assert gate.status == "review", "the forged on_timeout=fail settled the gate"
+    assert gate.metadata.get("escalated_to") == CAROL
+    assert datetime.fromisoformat(gate.metadata["wait_deadline"]) == escalated_at + timedelta(
+        seconds=TIMEOUT_S
+    )
+    [escalated] = actions(h.sink, "workflow.gate.escalated")
+    assert escalated.extra.get("escalated_to") == CAROL
+    new_cards = h.notifier.notices[cards_before:]
+    assert len(new_cards) == 1
+    assert MALLORY not in new_cards[0][0]
 
 
 # -- fail --------------------------------------------------------------------------

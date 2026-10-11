@@ -14,12 +14,14 @@ edited here — see SDD §6.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any
 
 from arcstore.tasks import Task, TaskLinkError
 from arcteam.mail import MailSendRequest
+from arcteam.workflow.runner_contracts import HUMAN_STEP_KINDS
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -35,9 +37,13 @@ from arcui.acting import (
 from arcui.audit import emit_mutation_audit
 from arcui.messaging import OPERATOR_MAIL_ENTITY
 from arcui.principals import Scope
+from arcui.request_body import read_capped_body
 from arcui.schemas import ErrorResponse
 
 _logger = logging.getLogger(__name__)
+
+MAX_BODY_BYTES = 64 * 1024
+"""The largest task create/patch/move body read; the same cap as ``POST /api/runs``."""
 
 # Fields both create and PATCH accept, validated through the ``Task`` model
 # with the deployment's tier and clearance (SPEC-088 REQ-602/603).
@@ -127,10 +133,23 @@ def _is_operator(request: Request) -> bool:
     return getattr(request.state, "role", None) == "operator"
 
 
-async def _json_body(request: Request) -> dict[str, Any] | None:
+async def _json_body(
+    request: Request, *, target: str, operation: str
+) -> dict[str, Any] | None | JSONResponse:
+    """The body as a JSON object (None when it is not one), or one audited 413.
+
+    Read through :func:`read_capped_body`, so a body over
+    :data:`MAX_BODY_BYTES` is refused before it is buffered or parsed.
+    """
+    raw = await read_capped_body(request, MAX_BODY_BYTES)
+    if raw is None:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail="body_too_large"
+        )
+        return _error(f"body over {MAX_BODY_BYTES} bytes", 413)
     try:
-        body = await request.json()
-    except Exception:  # reason: malformed body is a client error, not a 500
+        body = json.loads(raw)
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError both subclass it
         return None
     return body if isinstance(body, dict) else None
 
@@ -170,7 +189,9 @@ def _refuse_create(request: Request, reason: str) -> JSONResponse:
 
 async def create_task(request: Request) -> JSONResponse:
     """POST /api/team/tasks — create a task (operator, or an app bound to the owner agent)."""
-    body = await _json_body(request)
+    body = await _json_body(request, target="task:new", operation="task.create")
+    if isinstance(body, JSONResponse):
+        return body
     owner = (body or {}).get("owner_did")
     # An app needs ``tasks:write`` bound to the owner agent; an unowned task
     # binds no agent, so an app is refused.
@@ -250,7 +271,9 @@ async def patch_task(request: Request) -> JSONResponse:
         )
         return _error("operator_role_required", 403)
 
-    body = await _json_body(request)
+    body = await _json_body(request, target=target, operation="task.update")
+    if isinstance(body, JSONResponse):
+        return body
     if body is None:
         return _error("expected a JSON object body", 400)
     # Allowlist (SEC-F4): only editable fields survive; a client-supplied
@@ -361,7 +384,9 @@ async def move_task(request: Request) -> Response:
         )
         return _error("operator_role_required", 403)
 
-    body = await _json_body(request)
+    body = await _json_body(request, target=target, operation="task.move")
+    if isinstance(body, JSONResponse):
+        return body
     status = str((body or {}).get("status") or "")
     if not status:
         return _error('expected {"status": <column>}', 400)
@@ -407,9 +432,13 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     # nothing". Gate resolution belongs to the runner's control plane, so it is
     # relayed there rather than flipped in the task store here.
     # It follows the gate route's rules: ``gates:resolve`` on the gate's owner
-    # agent, then the decider, then the control plane's approver list.
-    if str(task.metadata.get("node_kind", "")) == "gate":
-        return await _resolve_gate(request, task_id, approve=approve, target=target)
+    # agent, then the decider, then the control plane's approver list. A
+    # human_input row is the same kind of waiting step and loops the same way.
+    node_kind = str(task.metadata.get("node_kind", ""))
+    if node_kind in HUMAN_STEP_KINDS:
+        return await _resolve_gate(
+            request, task_id, approve=approve, target=target, node_kind=node_kind
+        )
 
     refused = control_refusal(
         request, Scope.TASKS_WRITE, task.owner_did, target=target, operation=operation
@@ -435,19 +464,39 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
-async def _resolve_gate(request: Request, task_id: str, *, approve: bool, target: str) -> Response:
-    """Relay a gate task's approve/reject to the runner's gate control plane.
+async def _resolve_gate(
+    request: Request, task_id: str, *, approve: bool, target: str, node_kind: str
+) -> Response:
+    """Relay a human step's approve/reject to the runner's gate control plane.
 
-    Approve continues the run; reject fails it and records the rejection the
-    runner acts on — the terminal outcome the generic review flip could not
-    produce. When no runner is embedded the plane is absent and the operator is
-    told so (503) rather than silently falling back to the looping path.
+    Approve continues the run; reject fails it (``fail_run``, for a gate and a
+    human_input alike) and records the rejection the runner acts on — the
+    terminal outcome the generic review flip could not produce. A human_input
+    has no ``approve``: it needs ``submit`` with a payload, so approve is one
+    audited 409 naming the gate route. When no runner is embedded the plane is
+    absent and the operator is told so (503) rather than silently falling back
+    to the looping path.
     """
     from arcui.routes.workflows import GATE_OPERATION, _relay, admit_gate_decider
 
     admitted = await admit_gate_decider(request, task_id, target=target)
     if isinstance(admitted, Response):
         return admitted
+    if approve and node_kind == "human_input":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation=GATE_OPERATION,
+            outcome="denied",
+            detail="human_input_needs_submit",
+        )
+        return JSONResponse(
+            {
+                "error": "human_input_needs_submit",
+                "use": f'POST /api/workflow-tasks/{task_id}/gate {{"decision": "submit", ...}}',
+            },
+            status_code=409,
+        )
     decision = "approve" if approve else "fail_run"
     result = await admitted.plane.resolve_gate(
         task_id, decision=decision, notes="", actor=admitted.actor
@@ -456,12 +505,20 @@ async def _resolve_gate(request: Request, task_id: str, *, approve: bool, target
 
 
 async def approve_task(request: Request) -> Response:
-    """POST /api/tasks/{id}/approve — approve a review-gated task (review -> done)."""
+    """POST /api/tasks/{id}/approve — approve a review-gated task (review -> done).
+
+    A workflow gate is relayed to the gate plane; a human_input row is refused
+    (it needs ``submit`` with a payload on the gate route).
+    """
     return await _review_decision(request, approve=True)
 
 
 async def reject_task(request: Request) -> Response:
-    """POST /api/tasks/{id}/reject — reject a review-gated task (review -> todo)."""
+    """POST /api/tasks/{id}/reject — reject a review-gated task (review -> todo).
+
+    A workflow gate or human_input row is relayed to the gate plane instead and
+    fails its run.
+    """
     return await _review_decision(request, approve=False)
 
 

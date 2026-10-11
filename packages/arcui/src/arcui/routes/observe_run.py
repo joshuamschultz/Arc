@@ -93,22 +93,28 @@ async def _app_read_refusal(
 ) -> JSONResponse | None:
     """None when the caller may read this run; else one audited 404 (REQ-598).
 
-    Operator and viewer sessions read any run. An app needs ``runs:read`` on
-    the run's agent: the intake row's owner when the run was started through
+    Every caller goes through :func:`run_read_refusal`, so a request with no
+    principal is refused exactly as ``GET /api/runs/{id}`` refuses it. Operator
+    and viewer sessions read any run. An app needs ``runs:read`` on the run's
+    agent: the intake row's owner when the run was started through
     ``POST /api/runs``, else the one agent its own trace names. A run with no
     resolvable agent and a run outside the app's scope get the same 404, so an
     app cannot probe which runs exist.
     """
-    if not is_app(request):
-        return None
+    agent = await _app_run_agent(request, run_id, timeline) if is_app(request) else None
+    return run_read_refusal(request, run_id, agent, operation=operation)
+
+
+async def _app_run_agent(
+    request: Request, run_id: str, timeline: list[dict[str, Any]] | None
+) -> str | None:
+    """The agent an app's ``runs:read`` must cover for this run (None: unresolvable)."""
     row = await load_intake_row(request, run_id)
     if row is not None:
-        agent = row.owner_did
-    else:
-        if timeline is None:
-            timeline = await request.app.state.observe.timeline(run_id=run_id)
-        agent = _single_agent(timeline)
-    return run_read_refusal(request, run_id, agent, operation=operation)
+        return row.owner_did
+    if timeline is None:
+        timeline = await request.app.state.observe.timeline(run_id=run_id)
+    return _single_agent(timeline)
 
 
 def _single_agent(timeline: list[dict[str, Any]]) -> str | None:

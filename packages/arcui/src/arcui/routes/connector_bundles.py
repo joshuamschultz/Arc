@@ -37,6 +37,7 @@ from starlette.routing import Route
 from starlette.types import Message
 
 from arcui.audit import emit_mutation_audit, emit_read_audit, operator_audit_sink
+from arcui.request_body import read_capped_body
 from arcui.routes.agent_detail.config_files import BodyTooLargeError, read_json_object
 from arcui.routes.connectors import _connections, _is_operator
 
@@ -183,21 +184,6 @@ async def list_bundles(request: Request) -> JSONResponse:
 # --- staging --------------------------------------------------------------------------
 
 
-async def _capped_body(request: Request, cap: int) -> bytes | None:
-    """The request body, or ``None`` the moment it passes ``cap``."""
-    declared = request.headers.get("content-length", "")
-    if declared.isdigit() and int(declared) > cap:
-        return None
-    chunks: list[bytes] = []
-    total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > cap:
-            return None
-        chunks.append(chunk)
-    return b"".join(chunks)
-
-
 async def _uploaded_archive(request: Request, body: bytes) -> Path | JSONResponse:
     """Parse the multipart body already read, and spill its one file to a private temp file."""
     sent = False
@@ -233,7 +219,7 @@ async def upload_bundle(request: Request) -> JSONResponse:
     """POST /api/connector-bundles/upload — stage and review a package. Installs nothing."""
     if not _is_operator(request):
         return _error("Operator role required", 403)
-    body = await _capped_body(request, _staging(request).max_archive_bytes + _BODY_SLACK)
+    body = await read_capped_body(request, _staging(request).max_archive_bytes + _BODY_SLACK)
     if body is None:
         _audit(request, "upload", "?", "denied", "too_large")
         return _error("the package is over 50 MB", 413, reason="too_large")

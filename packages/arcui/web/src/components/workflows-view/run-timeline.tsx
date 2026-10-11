@@ -118,6 +118,9 @@ export function RunTimeline({ workflow, runId }: { workflow: WorkflowDetail; run
           taskId={gate.task_id!}
           nodeId={gate.node_id}
           body={`This run is waiting on ${gate.node_id}.`}
+          kind={gate.kind}
+          prompt={gate.prompt}
+          outputSchema={gate.output_schema_resolved}
         />
       ))}
       <div className="min-h-[380px] overflow-hidden rounded-lg border border-border">

@@ -11,6 +11,8 @@ from typing import Any, Protocol
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from arcui.request_body import read_capped_body
+
 logger = logging.getLogger(__name__)
 _MAX_BODY = 8192
 
@@ -88,21 +90,14 @@ async def _body(request: Request) -> dict[str, Any] | None:
     if request.headers.get("content-type", "").split(";", 1)[0] != "application/json":
         return None
     try:
-        if int(request.headers.get("content-length", "0")) > _MAX_BODY:
-            return None
-    except ValueError:
-        return None
-    chunks = bytearray()
-    try:
         async with asyncio.timeout(5):
-            async for chunk in request.stream():
-                chunks.extend(chunk)
-                if len(chunks) > _MAX_BODY:
-                    return None
+            raw = await read_capped_body(request, _MAX_BODY)
     except TimeoutError:
         return None
+    if raw is None:
+        return None
     try:
-        result = json.loads(chunks)
+        result = json.loads(raw)
     except (UnicodeError, ValueError):
         return None
     return result if isinstance(result, dict) else None
