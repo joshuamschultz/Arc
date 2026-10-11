@@ -75,6 +75,10 @@ class _Runner:
     async def gate_approvers(self, task: Any) -> tuple[str, ...]:
         return self._approvers
 
+    async def gate_payload_schema(self, task: Any) -> dict[str, Any] | None:
+        # The signed gate in these cases declares no payload schema.
+        return None
+
     async def advance(self, run_id: str) -> None:
         self.advanced += 1
 
