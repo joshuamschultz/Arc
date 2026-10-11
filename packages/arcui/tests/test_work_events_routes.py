@@ -51,6 +51,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import json
 import uuid
 from collections.abc import AsyncIterator
@@ -640,3 +641,62 @@ class TestKeys:
 
         assert (await rig.get(KEYS, {"agent": OLIVIA})).status_code == 403
         assert (await rig.get(KEYS)).status_code == 403
+
+
+# --- slot and lifetime bounds -------------------------------------------------------------
+
+
+async def test_an_audit_fault_at_subscribe_releases_the_slot(
+    rig: Rig, streams: list[Stream], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A slot taken and never released would lock the principal out after four faults."""
+    rig.as_app()
+    real_write = rig.worm.write
+
+    def _refuse_subscribe(row: Any) -> None:
+        if row.operation == "work_event.subscribe":
+            raise OSError("chain unavailable")
+        real_write(row)
+
+    monkeypatch.setattr(rig.worm, "write", _refuse_subscribe)
+    for _ in range(4):
+        broken = rig.stream(agent=OLIVIA)
+        with contextlib.suppress(Exception):
+            await broken.open()
+            await broken.close()
+    monkeypatch.setattr(rig.worm, "write", real_write)
+
+    stream = await rig.stream(agent=OLIVIA).open()
+    streams.append(stream)
+    assert stream.status == 200, "failed subscribes leaked their stream slots"
+
+
+async def test_a_stream_ends_at_its_lifetime_so_the_client_reconnects_and_reauthorizes(
+    rig: Rig, streams: list[Stream]
+) -> None:
+    """Scope is checked when a stream opens; a bounded lifetime makes a revoked app's
+    stream end, and the client resumes with Last-Event-ID through a fresh check."""
+    from arcui.routes.work_events import MAX_STREAM_SECONDS
+
+    rig.as_app()
+    started = rig.time.now
+    stream = await rig.stream(agent=OLIVIA).open()
+    streams.append(stream)
+
+    assert stream._task is not None
+    await asyncio.wait_for(stream._task, WAIT_S)
+
+    assert MAX_STREAM_SECONDS <= 3600
+    assert rig.time.now - started >= MAX_STREAM_SECONDS
+    (closed,) = rig.rows("work_event.close")
+    assert closed.outcome == "applied"
+
+
+async def test_a_cursor_past_the_seq_range_is_a_400_not_a_store_error(rig: Rig) -> None:
+    """``seq`` is a bigserial: a value past int64 must be refused before it reaches SQL."""
+    rig.as_app()
+
+    resp = await rig.get(PAGE, {"agent": OLIVIA, "after": str(2**63)})
+
+    assert resp.status_code == 400
+    assert resp.json()["error"] == "invalid_after"

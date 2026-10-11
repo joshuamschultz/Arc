@@ -45,15 +45,20 @@ from arcui.principals import Scope as PrincipalScope
 from arcui.principals import require_scope
 from arcui.work_event_envelope import pointer_envelope
 
-__all__ = ["HEARTBEAT_SECONDS", "MAX_STREAMS_PER_PRINCIPAL", "routes"]
+__all__ = ["HEARTBEAT_SECONDS", "MAX_STREAMS_PER_PRINCIPAL", "MAX_STREAM_SECONDS", "routes"]
 
 MAX_STREAMS_PER_PRINCIPAL = 4
 HEARTBEAT_SECONDS = 15.0
 POLL_SECONDS = 1.0
+#: Scope is checked when a stream opens. Ending each stream after an hour makes a
+#: revoked or de-scoped app lose it; the client resumes with ``Last-Event-ID``
+#: through a fresh authorization.
+MAX_STREAM_SECONDS = 3600.0
 DEFAULT_PAGE = 100
 #: Rows read per store call while filtering; a call scans at most _MAX_BATCHES.
 _BATCH = 200
 _MAX_BATCHES = 10
+_MAX_SEQ = 2**63 - 1  # ``seq`` is a Postgres bigserial
 _MAX_PARAM = 512
 _SLOTS_STATE = "work_event_stream_slots"
 
@@ -126,7 +131,7 @@ def _non_negative(raw: str | None, code: str, default: int) -> int:
         value = int(raw)
     except ValueError:
         raise _BadRequestError(code) from None
-    if value < 0:
+    if not 0 <= value <= _MAX_SEQ:
         raise _BadRequestError(code)
     return value
 
@@ -277,15 +282,16 @@ class _EventStream(Response):
             await limited(scope, receive, send)
             return
         detail = f"agent={self._query.agent} kinds={','.join(sorted(self._query.kinds))}"
-        emit_mutation_audit(
-            request,
-            target=target,
-            operation="work_event.subscribe",
-            outcome="applied",
-            detail=detail,
-        )
         frames = self._frames()
         try:
+            # Inside the try: a failed audit write must still release the slot.
+            emit_mutation_audit(
+                request,
+                target=target,
+                operation="work_event.subscribe",
+                outcome="applied",
+                detail=detail,
+            )
             stream = StreamingResponse(
                 frames,
                 media_type="text/event-stream",
@@ -305,8 +311,8 @@ class _EventStream(Response):
 
     async def _frames(self) -> AsyncGenerator[bytes, None]:
         cursor = self._after
-        last_comment = self._clock()
-        while True:
+        opened = last_comment = self._clock()
+        while self._clock() - opened < MAX_STREAM_SECONDS:
             events, cursor = await _matching(self._log, cursor, _BATCH, self._query)
             for event in events:
                 yield _frame(event)

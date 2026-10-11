@@ -219,6 +219,8 @@ data: {…envelope…}
   A bad value is `400 invalid_last_event_id`.
 - **Heartbeat:** a `: keepalive` comment at least every 15 seconds.
 - **Limit:** 4 open streams per principal. The next one is `429 too_many_streams`.
+- **Lifetime:** a stream ends after one hour. Reconnect with `Last-Event-ID`; the
+  reconnect is authorized again, so an app that lost its scope gets no more events.
 - Opening and closing a stream are each audited.
 - `503 work_events_unavailable` when the event log is absent.
 
