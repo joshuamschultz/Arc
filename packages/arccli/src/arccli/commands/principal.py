@@ -250,6 +250,13 @@ async def _create_approval(row: PendingApproval) -> PendingApproval:
 
 
 def _issue(args: argparse.Namespace) -> None:
+    if deployment_tier() == "federal":
+        # REQ-554: the CLI's only identity is the deployment key, not a person,
+        # so the second approver could never be checked against the requester.
+        _fail(
+            "federal app principals are issued in the dashboard (Settings > Apps), "
+            "signed in as an operator; a second operator approves them"
+        )
     with _principal_store() as (store, factory):
         tier, org = _deployment()
         principal, bearer = _new_principal(args, factory, org)

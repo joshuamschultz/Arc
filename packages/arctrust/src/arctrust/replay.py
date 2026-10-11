@@ -10,12 +10,11 @@ CLOCK_SKEW_SECONDS = 30
 
 
 class ReplayCache:
-    """Sliding-window nonce cache. Rejects replays and out-of-window timestamps.
+    """Sliding-window nonce cache. Rejects replays, stale and future timestamps.
 
-    A ``ts`` is accepted only if it is at most ``window_seconds`` old and at
-    most ``skew_seconds`` ahead of the local clock. Without the upper bound a
-    far-future ``ts`` would stay "fresh" (and its nonce pinned in memory)
-    indefinitely.
+    A ``ts`` more than ``max_skew_seconds`` ahead of this clock is refused, so
+    a far-future stamp can neither pin its nonce indefinitely nor stay "fresh"
+    across a restart that empties the cache.
 
     A nonce is remembered until its own timestamp can no longer pass the
     freshness check (``max(arrival, ts) + window``). Pruning by arrival time
@@ -24,10 +23,10 @@ class ReplayCache:
     """
 
     def __init__(
-        self, window_seconds: float = 300.0, skew_seconds: float = CLOCK_SKEW_SECONDS
+        self, window_seconds: float = 300.0, max_skew_seconds: float = CLOCK_SKEW_SECONDS
     ) -> None:
         self._window = window_seconds
-        self._skew = skew_seconds
+        self._max_skew = max_skew_seconds
         # nonce -> POSIX time after which the entry may be forgotten.
         self._forget_after: dict[str, float] = {}
 
@@ -48,7 +47,7 @@ class ReplayCache:
             sent_at = datetime.fromisoformat(ts).timestamp()
         except ValueError:
             return False
-        if now - sent_at > self._window or sent_at - now > self._skew:
+        if now - sent_at > self._window or sent_at - now > self._max_skew:
             return False
         if nonce in self._forget_after:
             return False

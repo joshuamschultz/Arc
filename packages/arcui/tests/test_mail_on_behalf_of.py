@@ -38,7 +38,7 @@ from arcteam.mail import AgentMailService
 from arcteam.types import Message
 from arctrust import AgentIdentity
 from arctrust.principals import Scope
-from arctrust.users import OPERATOR
+from arctrust.users import OPERATOR, VIEWER
 from packages.arcstore.tests.unit.inbox_fake import FakeInboxRepository
 from packages.arcui.tests.principal_fixtures import (
     OPERATOR_TOKEN,
@@ -191,6 +191,22 @@ class TestComposeMeta:
         meta = h.sent().meta
         assert meta["on_behalf_of"] == ada
         assert meta["via"] == app.did
+
+    def test_app_for_a_viewer_cannot_send_mail_the_viewer_could_not(
+        self, h: Harness, rig: PrincipalRig
+    ) -> None:
+        """REQ-562 / DEV-9: the person's roles cap the app. A viewer cannot
+        compose to an agent, so an app acting for that viewer cannot either,
+        even though the app holds inbox:send for the agent."""
+        _, vic = h.built.sign_in("vic@example.com", (VIEWER,))
+        app = _inbox_app(rig, vic)
+
+        resp = h.client.post(
+            COMPOSE, json=MAIL, headers=app.bearer_headers(**{OBO: vic, "Idempotency-Key": "c-1"})
+        )
+
+        assert resp.status_code == 403, resp.text
+        assert h.repository.mail_outbox == {}
 
     def test_signed_in_person_is_on_behalf_of_with_no_app(self, h: Harness) -> None:
         token, ada = h.built.sign_in("ada@example.com", (OPERATOR,))

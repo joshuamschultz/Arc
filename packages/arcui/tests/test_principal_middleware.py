@@ -291,6 +291,35 @@ class TestDenyByDefault:
             assert resp.status_code == 403, (method, path, resp.text)
             assert len(_refusal_rows(built)) - before == 1
 
+    @pytest.mark.parametrize(
+        "path", ["/api/approvals/a1/approve", "/api/workflows/wf-1/request-signature"]
+    )
+    def test_hard_deny_wins_over_a_matching_table_row(
+        self,
+        tmp_path: Path,
+        rig: PrincipalRig,
+        users: Any,
+        team: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        path: str,
+    ) -> None:
+        """A later spec that adds a row covering a hard-denied path (by a broad
+        regex or by mistake) still cannot open it to apps."""
+        import arcui.principals as principals_module
+
+        widened = (
+            *principals_module.APP_ROUTES,
+            principals_module.AppRoute("POST", re.compile(r"/api/.+"), Scope.RUNS_READ),
+        )
+        monkeypatch.setattr(principals_module, "APP_ROUTES", widened)
+        built = _app(tmp_path, rig, users, team)
+        app_principal = issue_principal(rig.open(), scopes=all_scopes((WILDCARD,)))
+
+        resp = _client(built).post(path, headers=app_principal.bearer_headers())
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json() == {"error": "route_not_allowed"}
+
     def test_signing_route_refused_with_all_scopes(
         self, tmp_path: Path, rig: PrincipalRig, users: Any, team: Path
     ) -> None:

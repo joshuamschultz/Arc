@@ -217,8 +217,14 @@ async def approve_always(
     standing: StandingGrantStore,
     row: PendingApproval,
     operator: ApprovalAuthority,
+    *,
+    resolved_by: str | None = None,
 ) -> tuple[PendingApproval, StandingGrant]:
     """Resolve ``row`` approved AND store an operator "Always allow" for its scope.
+
+    ``resolved_by`` names who decided (the signed-in person); the grants are
+    still signed by, and ``actor_did`` is, the operator authority. Defaults to
+    the operator when the caller has no person (``arc approve --always``).
 
     The one operation behind arcui's "Always allow" button and ``arc approve
     <id> --always``. The waiting call gets its one-shot grant exactly as with a
@@ -250,7 +256,7 @@ async def approve_always(
         row.id,
         status="approved",
         actor_did=operator.did,
-        resolved_by=operator.did,
+        resolved_by=resolved_by or operator.did,
         grant=grant_to_wire(sign_approval_for_hash(row.call_hash, operator)),
         note=f"always allow: {grant_id}",
     )

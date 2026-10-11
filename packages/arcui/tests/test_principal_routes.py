@@ -60,7 +60,7 @@ from arctrust.canonical import canonical_json
 from arctrust.identity import did_matches_pubkey, parse_did
 from arctrust.keypair import KeyPair, generate_keypair
 from arctrust.principal_auth import parse_bearer, secret_digest
-from arctrust.principals import Principal, Scope
+from arctrust.principals import Principal, Scope, derive_app_did
 from arctrust.sealed_state import SealedAuthorityState
 from arctrust.users import OPERATOR, VIEWER
 from packages.arcui.tests.principal_fixtures import (
@@ -904,6 +904,55 @@ class TestFederalIssue:
         assert record.status == "active"
         assert record.approved_by == approver_did
         assert _signed_probe(deployment, issued) == 200
+
+    def test_request_not_made_by_a_person_is_refused_at_federal(
+        self, deploy: Callable[..., _Deployment]
+    ) -> None:
+        """Abuse case: one human requests with the deployment key (CLI or direct
+        store write, ``created_by`` = a key DID, never equal to any person) and
+        then approves in the dashboard as themself. The two-person rule must
+        compare person to person, so a requester that is no person is refused."""
+        deployment = deploy("federal")
+        store = deployment.rig.open()
+        keys = generate_keypair()
+        now = datetime.now(UTC)
+        pending = Principal(
+            id="c" * 32,
+            name="key-issued",
+            did=derive_app_did(keys.public_key, org="default"),
+            public_key=keys.public_key.hex(),
+            secret_digest=secret_digest("s"),
+            scopes={Scope.INBOX_SEND: (OLIVIA,)},
+            subjects=(),
+            status="pending",
+            created_by=STORE_ACTOR,
+            approved_by=None,
+            created_at=now,
+            expires_at=now + timedelta(days=7),
+            last_used_at=None,
+            revoked_by=None,
+            revoked_at=None,
+        )
+        store.request(pending)
+        asyncio.run(
+            deployment.approvals.create(
+                PendingApproval(
+                    id="keyissued",
+                    agent_did=OLIVIA,
+                    tool=PRINCIPAL_ISSUE_TOOL,
+                    call_hash=pending.content_hash(),
+                    arguments={"principal_id": pending.id, "name": pending.name, "scopes": "{}"},
+                )
+            )
+        )
+        approver, _ = deployment.operator("app@example.com")
+
+        resp = deployment.client.post("/api/approvals/keyissued/approve", headers=approver)
+
+        assert resp.status_code == 403, resp.text
+        assert resp.json()["error"] == "named_requester_required"
+        assert deployment.stored(pending.id).status == "pending"
+        assert deployment.approval("keyissued").status == "pending"
 
     def test_federal_self_approval_then_other_operator_succeeds(
         self, deploy: Callable[..., _Deployment]

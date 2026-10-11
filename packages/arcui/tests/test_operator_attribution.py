@@ -236,6 +236,21 @@ class TestApprovalAttribution:
         assert grant_from_wire(row.grant).approver_did == deployment.operator_did
         assert row.resolved_by == person
 
+    def test_always_allow_keeps_the_operator_grant_and_records_the_person(
+        self, deploy: Callable[..., _Deployment]
+    ) -> None:
+        deployment = deploy()
+        headers, person = deployment.person()
+
+        resp = deployment.client.post(f"/api/approvals/{APPROVAL_ID}/always", headers=headers)
+
+        assert resp.status_code == 200, resp.text
+        row = deployment.approval()
+        assert row.status == "approved"
+        assert row.grant is not None
+        assert grant_from_wire(row.grant).approver_did == deployment.operator_did
+        assert row.resolved_by == person
+
     def test_static_token_deny_records_the_session_pseudo_did(
         self, deploy: Callable[..., _Deployment]
     ) -> None:

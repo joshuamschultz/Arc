@@ -241,6 +241,31 @@ class TestSignedRequestTampering:
         )
         assert (await h.runner.tasks.get(gate.id)).status == "review"
 
+    async def test_duplicate_on_behalf_of_header_refused(
+        self, h: Harness, leaks: LeakGuard
+    ) -> None:
+        """An intermediary prepends a second X-Arc-On-Behalf-Of. The verifier must
+        not sign-check one copy while the route acts on the other."""
+        run_id = await h.start(SALES_FLOW)
+        gate = await h.gate_task(run_id)
+        app = _issue(h, leaks, {Scope.GATES_RESOLVE: (SALES,)})
+        path = _gate_url(gate.id)
+        body = json.dumps(APPROVE).encode()
+        signed = _signed(
+            leaks, app, method="POST", path=path, body=body, on_behalf_of=h.people.viewer
+        )
+        # The injected copy comes first (what a plain header lookup returns);
+        # the signed copy comes last.
+        headers = [(OBO, h.people.listed), *signed.items()]
+
+        await _one_refusal(
+            h,
+            lambda: h.client.post(path, content=body, headers=headers),
+            status=401,
+            error=INVALID,
+        )
+        assert (await h.runner.tasks.get(gate.id)).status == "review"
+
     async def test_signature_replayed_on_another_path_refused(
         self, h: Harness, leaks: LeakGuard
     ) -> None:

@@ -237,6 +237,27 @@ class TestSignRequestWireFormat:
         del headers[missing]
         assert _reject(lambda: envelope(headers)).reason == "malformed"
 
+    @pytest.mark.parametrize("repeated", sorted(HEADER_NAMES | {"X-Arc-On-Behalf-Of"}))
+    def test_from_headers_repeated_arc_header_refused(
+        self, keys: KeyPair, record: Principal, repeated: str
+    ) -> None:
+        """A repeated X-Arc-* header is ambiguous: the verifier and the route
+        could each read a different copy (one signed, one acted on)."""
+
+        class _MultiHeaders(dict[str, str]):
+            """A header map that, like an HTTP one, can repeat a name in items()."""
+
+            def __init__(self, pairs: list[tuple[str, str]]) -> None:
+                super().__init__(pairs)
+                self._pairs = pairs
+
+            def items(self) -> Any:
+                return list(self._pairs)
+
+        headers = signed_headers(keys, record)
+        pairs = [(repeated.lower(), "injected"), *headers.items()]
+        assert _reject(lambda: envelope(_MultiHeaders(pairs))).reason == "malformed"
+
 
 # ---------------------------------------------------------------------------
 # Round trip and field binding (REQ-559)

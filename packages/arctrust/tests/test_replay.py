@@ -54,6 +54,19 @@ def test_nonce_forgotten_once_its_timestamp_is_stale(monkeypatch: pytest.MonkeyP
     assert len(cache) == 1
 
 
+def test_timestamp_beyond_clock_skew_ahead_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every caller (MCP door, team messenger, app principals) gets the future
+    bound: a far-future ts would otherwise pin its nonce for years and could be
+    replayed after a restart while still 'fresh'."""
+    now = datetime.now(UTC)
+    _pin_clock(monkeypatch, now)
+    cache = ReplayCache(window_seconds=300)
+    assert cache.check_and_record("near", (now + timedelta(seconds=29)).isoformat())
+    assert not cache.check_and_record("far", (now + timedelta(seconds=31)).isoformat())
+    assert not cache.check_and_record("years", (now + timedelta(days=3650)).isoformat())
+    assert len(cache) == 1
+
+
 def _pin_clock(monkeypatch: pytest.MonkeyPatch, start: datetime) -> list[datetime]:
     """Pin the wall clock ``ReplayCache`` reads (an external boundary)."""
     current = [start]
