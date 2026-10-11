@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arctrust.audit import AuditEvent, emit
 
-from arcstore.backends.base import APPROVAL_OUTBOX_TABLE, MAIL_OUTBOX_TABLE
+from arcstore.backends.base import (
+    APPROVAL_OUTBOX_TABLE,
+    MAIL_OUTBOX_TABLE,
+    WORK_EVENT_FILTER_FIELDS,
+)
 from arcstore.mutation_fence import (
     RUNNER_LEASE_COLLECTION,
     RUNNER_LEASE_KEY,
@@ -69,6 +73,10 @@ class FakeBackend(SourceSyncBackend):
         self._tables: dict[str, dict[str, dict[str, Any]]] = {}
         self._cursors: dict[str, int] = {}
         self._mutable: dict[tuple[str, str], tuple[dict[str, Any], str]] = {}
+        # Work events keep insertion (= seq) order; deliveries key by event_id.
+        self._work_events: dict[str, dict[str, Any]] = {}
+        self._work_deliveries: dict[str, dict[str, Any]] = {}
+        self._work_seq = 0
         self._lock = asyncio.Lock()
 
     async def start(self) -> None:
@@ -949,6 +957,92 @@ class FakeBackend(SourceSyncBackend):
             row["failure_reason"] = reason
             row.pop("lease_owner", None)
             row.pop("lease_until", None)
+            return True
+
+    async def append_work_event(
+        self, event: dict[str, Any], *, callback_url: str | None, now: datetime
+    ) -> bool:
+        event_id = event["event_id"]
+        async with self._lock:
+            if event_id in self._work_events:
+                return False
+            self._work_seq += 1
+            self._work_events[event_id] = {**copy.deepcopy(event), "seq": self._work_seq}
+            if callback_url is not None:
+                self._work_deliveries[event_id] = {
+                    "event_id": event_id,
+                    "callback_url": callback_url,
+                    "state": "pending",
+                    "attempts": 0,
+                    "next_attempt_at": now,
+                    "lease_owner": None,
+                    "lease_expires_at": None,
+                    "last_error": None,
+                }
+            return True
+
+    async def read_work_events(
+        self,
+        after_seq: int,
+        *,
+        limit: int,
+        where: Mapping[str, str | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        filters = dict(where or {})
+        if not set(filters) <= WORK_EVENT_FILTER_FIELDS:
+            raise ValueError("unsupported work-event filter")
+        async with self._lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._work_events.values()
+                if row["seq"] > after_seq
+                and all(row.get(field) == value for field, value in filters.items())
+            ]
+        return rows[:limit]
+
+    async def claim_work_event_deliveries(
+        self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
+    ) -> list[dict[str, Any]]:
+        async with self._lock:
+            due = [
+                row
+                for row in self._work_deliveries.values()
+                if row["state"] == "pending"
+                and row["next_attempt_at"] <= now
+                and (row["lease_expires_at"] is None or row["lease_expires_at"] <= now)
+            ][:limit]
+            for row in due:
+                row["lease_owner"] = consumer_id
+                row["lease_expires_at"] = now + timedelta(seconds=lease_seconds)
+                row["attempts"] += 1
+            return [copy.deepcopy(row) for row in due]
+
+    async def settle_work_event_delivery(
+        self,
+        event_id: str,
+        *,
+        state: str,
+        next_attempt_at: datetime | None,
+        error: str | None,
+        consumer_id: str | None,
+        now: datetime,
+    ) -> bool:
+        if state not in {"pending", "delivered", "withheld", "dead"}:
+            raise ValueError(f"unknown delivery state: {state!r}")
+        async with self._lock:
+            row = self._work_deliveries.get(event_id)
+            if row is None or row["state"] != "pending" or row["lease_owner"] is None:
+                return False
+            if consumer_id is not None and (
+                row["lease_owner"] != consumer_id or row["lease_expires_at"] <= now
+            ):
+                return False
+            row["state"] = state
+            if next_attempt_at is not None:
+                row["next_attempt_at"] = next_attempt_at
+            row["lease_owner"] = None
+            row["lease_expires_at"] = None
+            row["last_error"] = error
             return True
 
     def _update_if_locked(

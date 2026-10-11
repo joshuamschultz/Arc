@@ -26,7 +26,14 @@ from __future__ import annotations
 import re
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
 from pydantic_core import ErrorDetails
 
 from arcteam.workflow.errors import ValidationIssue, WorkflowParseError
@@ -45,7 +52,13 @@ substrate cannot serve (LLM10)."""
 MAX_DEFINITION_BYTES = 256 * 1024
 """Size quota for the serialized definition."""
 
-NODE_KINDS: tuple[str, ...] = ("agent", "tool", "script", "router", "gate")
+NODE_KINDS: tuple[str, ...] = ("agent", "tool", "script", "router", "gate", "human_input")
+
+MAX_EVENTS = 32
+"""How many named events one workflow may declare."""
+
+EVENT_NAME_PATTERN = r"^[a-z][a-z0-9_]{0,63}$"
+"""What an event name may be. It is part of the fire-event URL, so it is never a path."""
 
 WORKFLOW_ID_PATTERN = r"^[a-zA-Z][a-zA-Z0-9_-]*$"
 """What a workflow id may be. A workflow id also names a directory inside the
@@ -54,6 +67,7 @@ path — it is shared with the store rather than restated there (ADR-029)."""
 
 RouterMode = Literal["rules", "llm"]
 TriggerType = Literal["cron", "interval", "manual"]
+OnTimeout = Literal["fail", "continue", "escalate"]
 
 _FROZEN = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
@@ -97,6 +111,19 @@ class InputSpec(BaseModel):
 
     model_config = _FROZEN
 
+    schema_ref: str = Field(alias="schema")
+
+
+class EventSpec(BaseModel):
+    """A named event an outside caller may fire to start a run (SPEC-088 REQ-604).
+
+    ``schema_ref`` (``schema`` on the wire, as for :class:`InputSpec`) names the
+    bundle file the event payload is validated against.
+    """
+
+    model_config = _FROZEN
+
+    name: str = Field(pattern=EVENT_NAME_PATTERN)
     schema_ref: str = Field(alias="schema")
 
 
@@ -190,34 +217,86 @@ at run start and against the decider's REGISTRY roles at resolution."""
 _APPROVER_RE = re.compile(f"{APPROVER_DID_PATTERN}|{APPROVER_ROLE_PATTERN}")
 
 
+def _validate_approvers(approvers: tuple[str, ...]) -> tuple[str, ...]:
+    """The one approver rule shared by every node a human decides."""
+    for approver in approvers:
+        if not _APPROVER_RE.fullmatch(approver):
+            raise ValueError(
+                f"approver {approver!r} is neither a DID nor role:<name> "
+                "(e.g. 'did:arc:telegram:12345' or 'role:reviewer')"
+            )
+    if len(set(approvers)) != len(approvers):
+        raise ValueError("approvers lists the same entry twice")
+    return approvers
+
+
+def _validate_on_timeout(on_timeout: OnTimeout, info: ValidationInfo) -> OnTimeout:
+    """Anything but ``fail`` acts on a deadline, so the deadline must exist."""
+    if on_timeout != "fail" and info.data.get("timeout_s") is None:
+        raise ValueError(f"on_timeout = {on_timeout!r} needs timeout_s")
+    return on_timeout
+
+
+def _validate_escalate_to(escalate_to: str | None, info: ValidationInfo) -> str | None:
+    """``escalate_to`` is required exactly when ``on_timeout`` is ``escalate``."""
+    escalating = info.data.get("on_timeout") == "escalate"
+    if escalate_to is None:
+        if escalating:
+            raise ValueError("on_timeout = 'escalate' needs escalate_to (a DID or role:<name>)")
+        return None
+    if not escalating:
+        raise ValueError("escalate_to is only allowed with on_timeout = 'escalate'")
+    if not _APPROVER_RE.fullmatch(escalate_to):
+        raise ValueError(
+            f"escalate_to {escalate_to!r} is neither a DID nor role:<name> "
+            "(e.g. 'did:arc:user:alice' or 'role:supervisor')"
+        )
+    return escalate_to
+
+
 class GateNode(NodeBase):
     """A human decision. Resolvable only by the control plane, never by a tool.
 
     ``approvers`` names who may decide: DIDs, or ``role:<name>`` for anyone the
     team registry gives that role. Empty means the operator only — a gate never
-    defaults to "anyone who can reach the chat".
+    defaults to "anyone who can reach the chat". ``on_timeout`` says what a
+    passed ``timeout_s`` deadline does; ``escalate_to`` names who is added as an
+    approver when it escalates.
     """
 
     kind: Literal["gate"]
     gate: str
     approvers: tuple[str, ...] = ()
+    on_timeout: OnTimeout = "fail"
+    # validate_default: "escalate" without escalate_to must be refused, and a
+    # field validator only sees an absent field when its default is validated.
+    escalate_to: str | None = Field(default=None, validate_default=True)
 
-    @field_validator("approvers")
-    @classmethod
-    def _approver_syntax(cls, approvers: tuple[str, ...]) -> tuple[str, ...]:
-        for approver in approvers:
-            if not _APPROVER_RE.fullmatch(approver):
-                raise ValueError(
-                    f"approver {approver!r} is neither a DID nor role:<name> "
-                    "(e.g. 'did:arc:telegram:12345' or 'role:reviewer')"
-                )
-        if len(set(approvers)) != len(approvers):
-            raise ValueError("approvers lists the same entry twice")
-        return approvers
+    _approver_syntax = field_validator("approvers")(_validate_approvers)
+    _on_timeout_needs_deadline = field_validator("on_timeout")(_validate_on_timeout)
+    _escalate_to_iff_escalating = field_validator("escalate_to")(_validate_escalate_to)
+
+
+class HumanInputNode(NodeBase):
+    """A human supplies structured input. Resolvable only by the control plane.
+
+    Same approver, ``on_timeout`` and ``escalate_to`` rules as :class:`GateNode`.
+    The validator (not the model) requires an ``output_schema``.
+    """
+
+    kind: Literal["human_input"]
+    prompt: str = Field(min_length=1, max_length=4000)
+    approvers: tuple[str, ...] = ()
+    on_timeout: OnTimeout = "fail"
+    escalate_to: str | None = Field(default=None, validate_default=True)
+
+    _approver_syntax = field_validator("approvers")(_validate_approvers)
+    _on_timeout_needs_deadline = field_validator("on_timeout")(_validate_on_timeout)
+    _escalate_to_iff_escalating = field_validator("escalate_to")(_validate_escalate_to)
 
 
 WorkflowNode = Annotated[
-    AgentNode | ToolNode | ScriptNode | RouterNode | GateNode,
+    AgentNode | ToolNode | ScriptNode | RouterNode | GateNode | HumanInputNode,
     Field(discriminator="kind"),
 ]
 
@@ -246,7 +325,16 @@ class WorkflowDefinition(BaseModel):
     budget: Budget | None = None
     trigger: Trigger | None = None
     input_spec: InputSpec | None = Field(default=None, alias="input")
+    events: tuple[EventSpec, ...] = Field(default=(), alias="event", max_length=MAX_EVENTS)
     nodes: tuple[WorkflowNode, ...] = Field(min_length=1)
+
+    @field_validator("events")
+    @classmethod
+    def _unique_event_names(cls, events: tuple[EventSpec, ...]) -> tuple[EventSpec, ...]:
+        names = [event.name for event in events]
+        if len(set(names)) != len(names):
+            raise ValueError("two [[event]] tables share a name")
+        return events
 
     @property
     def node_ids(self) -> tuple[str, ...]:
@@ -268,7 +356,7 @@ class WorkflowDefinition(BaseModel):
         workflow = _drop_empty(
             self.model_dump(
                 by_alias=True,
-                exclude={"nodes", "trigger", "input_spec"},
+                exclude={"nodes", "trigger", "input_spec", "events"},
                 exclude_none=True,
                 exclude_defaults=exclude_defaults,
             )
@@ -280,6 +368,10 @@ class WorkflowDefinition(BaseModel):
             )
         if self.input_spec is not None:
             document["input"] = self.input_spec.model_dump(by_alias=True)
+        # Only when declared: a workflow without events keeps the exact
+        # canonical bytes (and signature) it had before events existed.
+        if self.events:
+            document["event"] = [event.model_dump(by_alias=True) for event in self.events]
         document["node"] = [
             _drop_empty(
                 node.model_dump(
@@ -314,6 +406,8 @@ class WorkflowDefinition(BaseModel):
                 normalized["needs"] = sorted(normalized["needs"])
             nodes.append(normalized)
         document["node"] = sorted(nodes, key=lambda n: str(n["id"]))
+        if "event" in document:
+            document["event"] = sorted(document["event"], key=lambda e: str(e["name"]))
         return document
 
 
@@ -371,6 +465,8 @@ def parse_definition(document: dict[str, Any]) -> WorkflowDefinition:
         payload["trigger"] = document["trigger"]
     if "input" in document:
         payload["input"] = document["input"]
+    if "event" in document:
+        payload["event"] = document["event"]
 
     try:
         return WorkflowDefinition.model_validate(payload)
@@ -457,17 +553,22 @@ def _admissible_for(field: str, error: ErrorDetails) -> tuple[str, ...]:
 
 
 __all__ = [
+    "EVENT_NAME_PATTERN",
     "MAX_DEFINITION_BYTES",
+    "MAX_EVENTS",
     "MAX_NODES",
     "NODE_KINDS",
     "SCHEMA_VERSION",
     "ActiveHours",
     "AgentNode",
     "Budget",
+    "EventSpec",
     "GateNode",
+    "HumanInputNode",
     "InputSpec",
     "NodeBase",
     "OnFailure",
+    "OnTimeout",
     "Route",
     "RouterMode",
     "RouterNode",

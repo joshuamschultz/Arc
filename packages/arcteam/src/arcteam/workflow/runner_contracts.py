@@ -19,6 +19,8 @@ it is allowed to touch.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from arcstore.mutation_fence import RunnerFence
@@ -29,7 +31,7 @@ Tier = Literal["personal", "enterprise", "federal"]
 
 # Who asked for a run. Named by the caller, never inferred: it decides whether an
 # unsigned definition may run at all (S-wf-unsigned).
-Initiator = Literal["operator", "agent", "scheduler", "chat"]
+Initiator = Literal["operator", "agent", "scheduler", "chat", "event"]
 """Deployment stringency. Handed to the runner at CONSTRUCTION, never resolved
 per node — an audit event that names a tier must name the true one
 (.claude/solutions/security-issues/2026-04-18-tier-must-flow-through-construction.md)."""
@@ -46,9 +48,25 @@ audits exactly that."""
 RunStatus = Literal[
     "pending", "running", "waiting_gate", "done", "done_with_failures", "failed", "cancelled"
 ]
-NodeKind = Literal["agent", "tool", "script", "router", "gate"]
+NodeKind = Literal["agent", "tool", "script", "router", "gate", "human_input"]
 OnFailure = Literal["fail_run", "continue", "skip_dependents"]
 BundleStatus = Literal["draft", "signed", "archived"]
+
+TriggerKind = Literal["manual", "cron", "interval", "event"]
+
+
+@dataclass(frozen=True)
+class TriggerContext:
+    """What started a run, recorded on the run input as ``arc_trigger``.
+
+    ``name`` is the fired event's name for ``kind == "event"``, else ``None``.
+    It selects the governing schema: an event run validates against that
+    event's schema, every other run against the workflow's input schema.
+    """
+
+    kind: TriggerKind
+    name: str | None = None
+
 
 TERMINAL_RUN_STATUSES: frozenset[str] = frozenset(
     {"done", "done_with_failures", "failed", "cancelled"}
@@ -154,6 +172,20 @@ class RoleRoster(Protocol):
     async def roles_of(self, did: str) -> frozenset[str]: ...
 
 
+class InputSchemaSpec(Protocol):
+    """The workflow's declared run input: a schema file in the bundle."""
+
+    @property
+    def schema_ref(self) -> str: ...
+
+
+class EventSchemaSpec(InputSchemaSpec, Protocol):
+    """A declared event an outside caller may fire; its payload schema."""
+
+    @property
+    def name(self) -> str: ...
+
+
 class WorkflowSpec(Protocol):
     """A parsed, validated workflow definition."""
 
@@ -171,6 +203,10 @@ class WorkflowSpec(Protocol):
     def nodes(self) -> Sequence[NodeSpec]: ...
     @property
     def node_ids(self) -> Sequence[str]: ...
+    @property
+    def input_spec(self) -> InputSchemaSpec | None: ...
+    @property
+    def events(self) -> Sequence[EventSchemaSpec]: ...
 
     def node_by_id(self, node_id: str) -> NodeSpec: ...
 
@@ -202,6 +238,10 @@ class BundleSpec(Protocol):
     def signer_did(self) -> str | None: ...
     @property
     def content_hash(self) -> str: ...
+    @property
+    def root(self) -> Path:
+        """The bundle directory; schema refs resolve inside it and nowhere else."""
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -378,7 +418,12 @@ class RunStoreLike(Protocol):
         budget_wall_clock_s: float | None,
         fence: RunnerFence | None = None,
     ) -> tuple[RunRecord, bool]:
-        """The run, and whether THIS call created it (False: an existing run)."""
+        """The run, and whether THIS call created it (False: an existing run).
+
+        Raises ``arcteam.workflow.stores.RunIdentityConflictError`` (a
+        ``ValueError``) when ``run_id`` already names a run created from a
+        different request.
+        """
         ...
 
     async def get(self, run_id: str) -> RunRecord | None: ...
@@ -522,8 +567,10 @@ __all__ = [
     "DefinitionParser",
     "DefinitionStoreLike",
     "DefinitionValidator",
+    "EventSchemaSpec",
     "GateNodeSpec",
     "Initiator",
+    "InputSchemaSpec",
     "NodeKind",
     "NodeSpec",
     "OnFailure",
@@ -538,6 +585,8 @@ __all__ = [
     "RunStoreLike",
     "Tier",
     "ToolNodeSpec",
+    "TriggerContext",
+    "TriggerKind",
     "ValidationIssueLike",
     "WorkflowSpec",
     "WorkflowTaskStoreLike",

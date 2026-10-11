@@ -90,9 +90,9 @@ def dump_toml(document: Mapping[str, Any]) -> str:
     """Render a workflow document as TOML that parses back to the same document.
 
     Deliberately narrow: it handles exactly the shapes a workflow document can
-    hold — a header table, optional trigger and input tables, and an
-    array-of-tables of nodes whose values are scalars, arrays of scalars,
-    inline tables, or arrays of inline tables.
+    hold — a header table, optional trigger and input tables, an optional
+    array-of-tables of events, and an array-of-tables of nodes whose values are
+    scalars, arrays of scalars, inline tables, or arrays of inline tables.
     """
     lines: list[str] = []
     for table in ("workflow", "trigger", "input"):
@@ -100,6 +100,10 @@ def dump_toml(document: Mapping[str, Any]) -> str:
             lines.append(f"[{table}]")
             lines.extend(_emit_pairs(document[table]))
             lines.append("")
+    for event in document.get("event", ()):
+        lines.append("[[event]]")
+        lines.extend(_emit_pairs(event))
+        lines.append("")
     for node in document.get("node", ()):
         lines.append("[[node]]")
         lines.extend(_emit_pairs(node))

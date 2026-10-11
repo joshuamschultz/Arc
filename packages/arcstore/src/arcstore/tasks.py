@@ -11,6 +11,7 @@ contract.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -21,6 +22,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar, Literal, Protocol
 
 from arctrust.audit import AuditSink
+from arctrust.classification import dominates, parse_classification
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -33,6 +35,7 @@ from pydantic import (
 )
 
 from arcstore.mutation_fence import RunnerFence
+from arcstore.work_events import WorkEvent, WorkEventLog
 
 TaskStatus = Literal["backlog", "todo", "in_progress", "review", "done", "failed"]
 # Columns an operator may move a task INTO from the board. `in_progress` is absent:
@@ -170,8 +173,44 @@ class Task(BaseModel):
     # a node with no timeout is never killed while its owner is still alive.
     lease_owner: str | None = None
     lease_beat_at: str | None = None
+    # Optional deadline (SPEC-088 REQ-602): a timezone-aware ISO-8601 instant.
+    due_at: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
+
+    @field_validator("due_at")
+    @classmethod
+    def _aware_due_at(cls, value: str | None) -> str | None:
+        # A naive time would be read in whatever zone the reader runs in, so
+        # the deadline is refused rather than guessed.
+        if value is None:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError("due_at must be an ISO-8601 timestamp") from exc
+        if parsed.tzinfo is None or parsed.utcoffset() is None:
+            raise ValueError("due_at must include a timezone")
+        return value
+
+    @field_validator("classification")
+    @classmethod
+    def _tier_gated_classification(cls, value: str, info: ValidationInfo) -> str:
+        # SPEC-088 REQ-603: a caller that names its tier or clearance gets the
+        # label parsed against them (strict at federal, never above clearance).
+        # No tier/clearance in the context keeps the free-string behavior that
+        # agent-internal writers and stored-row reads rely on.
+        context = info.context or {}
+        tier = context.get("tier")
+        clearance = context.get("clearance")
+        if tier is None and clearance is None:
+            return value
+        label = parse_classification(value, strict=tier == "federal")
+        if clearance is not None:
+            ceiling = parse_classification(str(clearance), strict=True)
+            if not dominates(ceiling, label):
+                raise ValueError("classification is above the caller's clearance")
+        return label.name
 
     @field_validator("title", "description")
     @classmethod
@@ -410,6 +449,73 @@ def _is_chain_relative(active: Task, target: Task) -> bool:
     return target.parent_id is not None and target.parent_id == active.parent_id
 
 
+#: Most blockers one task may name; also bounds a link walk's fan-out.
+MAX_BLOCKERS = 50
+#: Deepest parent or blocker chain ``validate_links`` walks before refusing.
+MAX_LINK_DEPTH = 64
+
+
+class TaskConflictError(Exception):
+    """An intake id is already taken by a different request (SPEC-088 REQ-593)."""
+
+
+class TaskLinkError(ValueError):
+    """A parent or blocker link is missing, unbounded or cyclic (SPEC-088 REQ-601)."""
+
+
+def _intake_event_id(task_id: str, status: str) -> str:
+    """Deterministic event id for one intake row reaching one final status.
+
+    JSON array encoding keeps the parts unambiguous (no separator collision),
+    so a replayed terminal write derives the same id and the log drops it.
+    """
+    material = json.dumps(["intake", task_id, status], separators=(",", ":"))
+    return hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+
+def _intake_terminal_event(task: Task) -> WorkEvent | None:
+    """The ``run.*`` work event for a terminal intake row; ``None`` otherwise.
+
+    Only the top-level ``metadata.intake`` block (written by the intake route)
+    counts; caller data nested elsewhere in metadata is never intake.
+    """
+    intake = task.metadata.get("intake")
+    if not isinstance(intake, Mapping) or task.status not in ("done", "failed"):
+        return None
+    if task.owner_did is None:
+        return None
+    return WorkEvent(
+        event_id=_intake_event_id(task.id, task.status),
+        kind="run.finished" if task.status == "done" else "run.failed",
+        occurred_at=task.completed_at or _now(),
+        agent_did=task.owner_did,
+        run_id=_optional_str(intake.get("run_id")),
+        task_id=task.id,
+        correlation_id=_optional_str(intake.get("correlation_id")),
+        status=task.status,
+        classification=task.classification,
+        callback_url=_optional_str(intake.get("callback_url")),
+    )
+
+
+def _optional_str(value: Any) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _stamp_new(task: Task, now: str) -> Task:
+    """Apply the create-time defaults shared by every create path.
+
+    A caller that didn't set status explicitly gets the SDD §4 default
+    (owned -> todo, unowned -> backlog); an explicit status is never
+    second-guessed. ``model_fields_set`` is how Pydantic distinguishes
+    "left at default" from "passed the default value on purpose".
+    """
+    update: dict[str, Any] = {"created_at": now, "updated_at": now}
+    if "status" not in task.model_fields_set:
+        update["status"] = "todo" if task.owner_did is not None else "backlog"
+    return task.model_copy(update=update)
+
+
 class TaskStore:
     """Task directory over the mutable plane's ``"tasks"`` collection."""
 
@@ -421,23 +527,36 @@ class TaskStore:
     # tier. The hard injection patterns still run on every load.
     _READ_CONTEXT: ClassVar[dict[str, bool]] = {"allow_external_refs": True}
 
-    def __init__(self, backend: MutableTaskBackend, *, sink: AuditSink | None = None) -> None:
+    def __init__(
+        self,
+        backend: MutableTaskBackend,
+        *,
+        sink: AuditSink | None = None,
+        work_events: WorkEventLog | None = None,
+    ) -> None:
         self._backend = backend
         self._sink = sink
+        self._work_events = work_events
+
+    async def _settled(self, task: Task | None) -> Task | None:
+        """Pass through a row this call just made terminal, emitting its intake event.
+
+        Callers invoke this only after their own write made the transition, so
+        a refused (stale) or repeated terminal write appends nothing; the
+        deterministic event id makes a racing duplicate a no-op in the log.
+        """
+        if task is None or self._work_events is None:
+            return task
+        event = _intake_terminal_event(task)
+        if event is not None:
+            await self._work_events.append(event)
+        return task
 
     def _load(self, row: dict[str, Any]) -> Task:
         return Task.model_validate(row, context=self._READ_CONTEXT)
 
     async def create(self, task: Task, *, fence: RunnerFence | None = None) -> Task:
-        # A caller that didn't set status explicitly gets the SDD §4 default
-        # (owned -> todo, unowned -> backlog); an explicit status is never
-        # second-guessed. ``model_fields_set`` is how Pydantic distinguishes
-        # "left at default" from "passed the default value on purpose".
-        if "status" not in task.model_fields_set:
-            derived: TaskStatus = "todo" if task.owner_did is not None else "backlog"
-            task = task.model_copy(update={"status": derived})
-        now = datetime.now(UTC).isoformat()
-        task = task.model_copy(update={"created_at": now, "updated_at": now})
+        task = _stamp_new(task, datetime.now(UTC).isoformat())
         await self._backend.mutable_write(
             self._COLLECTION,
             task.id,
@@ -465,19 +584,96 @@ class TaskStore:
         with ``created_at``/``updated_at`` exactly like :meth:`create`.
         """
         now = datetime.now(UTC).isoformat()
-        prepared: list[Task] = []
-        for task in tasks:
-            t = task
-            if "status" not in t.model_fields_set:
-                derived: TaskStatus = "todo" if t.owner_did is not None else "backlog"
-                t = t.model_copy(update={"status": derived})
-            t = t.model_copy(update={"created_at": now, "updated_at": now})
-            prepared.append(t)
-        entries = [(t.id, t.model_dump(mode="json")) for t in prepared]
+        entries = [(t.id, _stamp_new(t, now).model_dump(mode="json")) for t in tasks]
         rows = await self._backend.mutable_create_batch(
             self._COLLECTION, entries, actor_did=actor_did, sink=self._sink, fence=fence
         )
         return [self._load(row) for row in rows]
+
+    async def create_if_absent(self, task: Task, *, request_digest: str) -> tuple[Task, bool]:
+        """Create ``task`` only when its id is free; return ``(stored, created)``.
+
+        SPEC-088 REQ-593 idempotent intake. ``request_digest`` is stored at
+        ``metadata.request_digest`` and always wins over a caller-supplied
+        value. The row is written with one insert-if-absent backend call, so
+        two concurrent callers can never both report ``created``. A replay with
+        the same digest returns the stored row unchanged with ``False``; a
+        different digest, or an existing row that carries no digest at all
+        (an internal task whose id was guessed), raises ``TaskConflictError``.
+        """
+        metadata = {**task.metadata, "request_digest": request_digest}
+        prepared = _stamp_new(
+            task.model_copy(update={"metadata": metadata}), datetime.now(UTC).isoformat()
+        )
+        written = prepared.model_dump(mode="json")
+        (row,) = await self._backend.mutable_create_batch(
+            self._COLLECTION,
+            [(prepared.id, written)],
+            actor_did=prepared.creator_did,
+            sink=self._sink,
+        )
+        stored = self._load(row)
+        if stored.metadata.get("request_digest") != request_digest:
+            raise TaskConflictError(f"task {prepared.id!r} exists with a different request")
+        # The backend stamps its own updated_at; every other field is ours only
+        # when this call's insert is the one that landed.
+        created = {**row, "updated_at": None} == {**written, "updated_at": None}
+        return stored, created
+
+    async def validate_links(self, parent_id: str | None, blocked_by: Sequence[str]) -> None:
+        """Refuse links a new task must not carry (SPEC-088 REQ-601).
+
+        Raises ``TaskLinkError`` for more than ``MAX_BLOCKERS`` blockers, a
+        missing parent or blocker, or a cycle reachable from them. The walk is
+        bounded at ``MAX_LINK_DEPTH`` hops; a chain the walk cannot finish is
+        refused (fail closed), never accepted as acyclic.
+        """
+        if len(blocked_by) > MAX_BLOCKERS:
+            raise TaskLinkError(f"at most {MAX_BLOCKERS} blockers are allowed")
+        if parent_id is not None:
+            parent = await self._require_link(parent_id, "parent")
+            await self._walk_parents(parent)
+        cleared: set[str] = set()
+        for blocker_id in dict.fromkeys(blocked_by):
+            blocker = await self._require_link(blocker_id, "blocker")
+            await self._walk_blockers(blocker, path=(), cleared=cleared)
+
+    async def _require_link(self, task_id: str, role: str) -> Task:
+        task = await self.get(task_id)
+        if task is None:
+            raise TaskLinkError(f"{role} task {task_id!r} does not exist")
+        return task
+
+    async def _walk_parents(self, start: Task) -> None:
+        seen = {start.id}
+        current = start
+        for _ in range(MAX_LINK_DEPTH):
+            if current.parent_id is None:
+                return
+            if current.parent_id in seen:
+                raise TaskLinkError(f"parent chain of {start.id!r} contains a cycle")
+            seen.add(current.parent_id)
+            parent = await self.get(current.parent_id)
+            if parent is None:
+                return
+            current = parent
+        raise TaskLinkError(f"parent chain of {start.id!r} is deeper than {MAX_LINK_DEPTH}")
+
+    async def _walk_blockers(
+        self, task: Task, *, path: tuple[str, ...], cleared: set[str]
+    ) -> None:
+        """Depth-first walk of ``blocked_by``; ``cleared`` memoizes acyclic subtrees."""
+        if task.id in cleared:
+            return
+        if task.id in path:
+            raise TaskLinkError(f"blocker chain through {task.id!r} contains a cycle")
+        if len(path) >= MAX_LINK_DEPTH:
+            raise TaskLinkError(f"blocker chain is deeper than {MAX_LINK_DEPTH}")
+        for blocker_id in task.blocked_by:
+            blocker = await self.get(blocker_id)
+            if blocker is not None:
+                await self._walk_blockers(blocker, path=(*path, task.id), cleared=cleared)
+        cleared.add(task.id)
 
     async def get(self, task_id: str) -> Task | None:
         raw = await self._backend.mutable_read(self._COLLECTION, task_id)
@@ -857,7 +1053,10 @@ class TaskStore:
             patch["output"] = output
         if last_error is not None:
             patch["last_error"] = last_error
-        return await self.update(task_id, patch, actor_did=actor_did)
+        finished = await self.update(task_id, patch, actor_did=actor_did)
+        if current.status == status:
+            return finished  # already in this final status: not a transition
+        return await self._settled(finished)
 
     async def complete_attempt(
         self,
@@ -900,7 +1099,7 @@ class TaskStore:
         won = await self._backend.update_if(
             self._COLLECTION, task_id, patch, where=where, actor_did=actor_did, sink=self._sink
         )
-        return await self.get(task_id) if won else None
+        return await self._settled(await self.get(task_id)) if won else None
 
     async def _merge_metadata(
         self, task_id: str, patch: dict[str, Any], metadata_patch: Mapping[str, Any] | None
@@ -978,7 +1177,7 @@ class TaskStore:
         won = await self._backend.update_if(
             self._COLLECTION, task_id, patch, where=where, actor_did=actor_did, sink=self._sink
         )
-        return await self.get(task_id) if won else None
+        return await self._settled(await self.get(task_id)) if won else None
 
     async def requeue(
         self,
@@ -1064,7 +1263,7 @@ class TaskStore:
             sink=self._sink,
             fence=fence,
         )
-        return await self.get(task_id) if won else None
+        return await self._settled(await self.get(task_id)) if won else None
 
     async def request_cancel(self, task_id: str, *, actor_did: str) -> Task | None:
         """Flag an in_progress task for operator cancellation (P1, ASI09).

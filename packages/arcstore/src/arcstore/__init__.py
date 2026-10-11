@@ -57,6 +57,7 @@ from arcstore.source_sync import (
     SourceSyncStatus,
 )
 from arcstore.spool import read, record, spool_path
+from arcstore.work_events import WorkEvent, WorkEventDelivery, WorkEventLog
 
 __all__ = [
     "AcceptedRunStore",
@@ -95,6 +96,9 @@ __all__ = [
     "Thread",
     "ThreadPage",
     "TraceMetadata",
+    "WorkEvent",
+    "WorkEventDelivery",
+    "WorkEventLog",
     "read",
     "record",
     "resolve_data_dir",
