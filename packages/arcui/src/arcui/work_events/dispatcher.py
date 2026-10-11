@@ -60,6 +60,10 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 10
 SIGNING_DOMAIN = b"arc.work-event.v1"
 REQUEST_TIMEOUT_SECONDS = 10.0
+#: Whole-attempt bound. httpx timeouts are per phase, so a receiver that drips
+#: bytes is bounded only here; kept under the 60 s delivery lease so a late
+#: settle never finds its lease gone and the event sent twice.
+ATTEMPT_DEADLINE_SECONDS = 30.0
 _ACTOR_DID = "did:arc:system:work-events"
 _AUDIT_ACTION = "work_event.callback"
 _BATCH = 20
@@ -190,15 +194,26 @@ class CallbackDispatcher:
     async def _attempt(self, delivery: WorkEventDelivery) -> None:
         """One attempt, always settled; never raises past the batch."""
         try:
-            event = await self._log.get(delivery.event_id)
-            if event is None:
-                await self._settle(delivery, "dead", error="event_missing")
-                return
-            await self._deliver(delivery, event)
+            async with asyncio.timeout(ATTEMPT_DEADLINE_SECONDS):
+                event = await self._log.get(delivery.event_id)
+                if event is None:
+                    await self._settle(delivery, "dead", error="event_missing")
+                    return
+                await self._deliver(delivery, event)
         except asyncio.CancelledError:
             raise
-        except Exception:  # reason: one delivery's fault must not stop the batch
+        except Exception as exc:  # reason: one delivery's fault must not stop the batch
             logger.exception("work-event callbacks: attempt for %s failed", delivery.event_id)
+            await self._failed_unexpectedly(delivery, type(exc).__name__)
+
+    async def _failed_unexpectedly(self, delivery: WorkEventDelivery, reason: str) -> None:
+        """Count an unforeseen fault as a failed attempt, so the attempt cap, the
+        ``dead`` audit and the operator notice apply to it too. Best effort: a
+        store still down leaves the lease to expire and the delivery re-claimed."""
+        try:
+            await self._failed(delivery, reason)
+        except Exception:  # reason: the store is the fault; the lease expiry recovers
+            logger.warning("work-event callbacks: could not settle %s", delivery.event_id)
 
     async def _deliver(self, delivery: WorkEventDelivery, event: WorkEvent) -> None:
         try:
@@ -211,7 +226,10 @@ class CallbackDispatcher:
             return
         try:
             request = await self._pinned_request(delivery, event, entry.allow_private)
-            response = await self._client.send(request)
+            # Streamed and closed unread: only the status matters, and a
+            # receiver-controlled body is never buffered.
+            response = await self._client.send(request, stream=True)
+            await response.aclose()
         except _FailedAttemptError as exc:
             await self._failed(delivery, exc.reason)
             return

@@ -623,3 +623,51 @@ async def test_event_at_entry_clearance_is_delivered(rig: Rig) -> None:
 
     assert len(rig.receiver.requests) == 1
     assert rig.outcomes(event_id) == ["delivered"]
+
+
+# --- every attempt settles, and is bounded in time ---------------------------------
+
+
+class _BrokenSigner(WorkEventsSigner):
+    def sign(self, message: bytes) -> bytes:
+        raise RuntimeError("custody transit gone")
+
+
+async def test_an_unexpected_fault_settles_a_retry_and_dies_at_the_cap(rig: Rig) -> None:
+    """A fault outside the HTTP path still counts: never re-leased forever unaudited."""
+    from arcui.work_events.dispatcher import CallbackDispatcher
+
+    event_id = await rig.append()
+    dispatcher = CallbackDispatcher(rig.log, signer=_BrokenSigner(bytes(32)), **rig.kwargs())
+
+    await dispatcher.dispatch_once()
+    for delay in BACKOFF:
+        rig.clock.advance(delay)
+        await dispatcher.dispatch_once()
+
+    assert rig.receiver.requests == []
+    assert rig.outcomes(event_id) == ["retry"] * 9 + ["dead"]
+    assert rig.audit.callbacks(event_id)[0].extra["reason"] == "RuntimeError"
+    assert len(rig.notifier.calls) == 1
+
+
+async def test_a_receiver_that_never_answers_is_a_failed_attempt_within_the_deadline(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The per-phase httpx timeout does not bound a drip-feed; the attempt deadline does."""
+    from arcui.work_events import dispatcher as module
+
+    monkeypatch.setattr(module, "ATTEMPT_DEADLINE_SECONDS", 0.05)
+
+    async def _hang(_request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(60)
+        return httpx.Response(204)
+
+    event_id = await rig.append()
+    dispatcher = rig.dispatcher(transport=httpx.MockTransport(_hang))
+
+    await asyncio.wait_for(dispatcher.dispatch_once(), timeout=5)
+
+    assert rig.outcomes(event_id) == ["retry"]
+    assert rig.audit.callbacks(event_id)[0].extra["reason"] == "TimeoutError"
+    assert module.ATTEMPT_DEADLINE_SECONDS < 60, "must stay under the delivery lease"
