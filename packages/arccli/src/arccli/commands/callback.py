@@ -7,6 +7,10 @@
               approver could never be checked against the requester.
 ``list``    — every entry, its origin and status.
 ``remove``  — stop callbacks to an entry's origin from the next delivery check.
+``key``     — mint the work-events signing key if absent and print its key id. ``arc
+              init`` mints it on a new deployment; the deploy scripts skip ``arc
+              init`` on a box that already has config, so a deployment initialised
+              before SPEC-088 needs this once before any callback is sent.
 
 The allowlist is a sealed, anchored record in the account authority; every
 change is audited by the store itself (``work_event.callback_allowlist.<verb>``
@@ -183,6 +187,28 @@ def _remove(args: argparse.Namespace) -> None:
     _write(f"Removed {removed.id} ({removed.origin}); callbacks to it are refused from now on.")
 
 
+# ------------------------------------------------------------------------ key
+
+
+def _key(_args: argparse.Namespace) -> None:
+    from arctrust.operator_resolver import machine_security
+    from arctrust.paths import operator_root
+    from arctrust.signer import SignerError
+    from arctrust.work_event_signer import provision_work_event_key, work_event_signer_for
+
+    arc_dir = operator_root()
+    try:
+        security = machine_security(arc_dir)
+        provision_work_event_key(security, base=arc_dir)
+    except (OSError, SignerError, ValueError) as exc:
+        _fail(f"work-events key not provisioned ({type(exc).__name__}: {exc})")
+    signer = work_event_signer_for(security, base=arc_dir)
+    if signer is None:
+        _fail("work-events key was minted but custody cannot serve it; see the arc log")
+    _write(f"Work-events key ready  key_id={signer.key_id}  algorithm={signer.algorithm}")
+    _write("  Restart arc so the callback dispatcher starts: arc restart")
+
+
 # ------------------------------------------------------ approval-row actions
 
 
@@ -232,6 +258,9 @@ def _build_parser() -> argparse.ArgumentParser:
     remove = inner.add_parser("remove", help="Stop callbacks to an origin now.")
     remove.add_argument("id")
     remove.set_defaults(func=_remove)
+
+    key = inner.add_parser("key", help="Mint the work-events signing key if absent.")
+    key.set_defaults(func=_key)
     return parser
 
 

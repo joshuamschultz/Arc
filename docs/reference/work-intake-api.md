@@ -238,6 +238,10 @@ Returns `{"key_id", "algorithm", "public_key"}` with the key in base64. It is a
 dedicated work-events key, never the operator key. `503
 work_events_key_unavailable` if none exists.
 
+`arc init` mints this key. A deployment set up before it has none, and the deploy
+scripts skip `arc init` on a box that already has config. Mint it once with
+`arc callback key` (safe to re-run; it never replaces a key), then `arc restart`.
+
 ## Callbacks
 
 Give `callback_url` on `POST /api/runs` and Arc sends a signed `POST` to it for that
@@ -260,6 +264,7 @@ CLI:
 arc callback add https://hooks.example.com [--allow-private] [--clearance LEVEL]
 arc callback list
 arc callback remove <id>
+arc callback key        # mint the work-events key if absent; prints its key id
 ```
 
 By tier:

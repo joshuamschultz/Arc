@@ -339,7 +339,7 @@ def _provision_work_events_key(arc_dir: Path) -> None:
     except (OSError, SignerError, ValueError) as exc:
         sys.stderr.write(
             f"  Warning: work-events key not provisioned ({type(exc).__name__}: {exc}); "
-            "run callbacks are unavailable until it is.\n"
+            "run callbacks are unavailable until `arc callback key` mints it.\n"
         )
 
 

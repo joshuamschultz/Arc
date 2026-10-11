@@ -135,6 +135,9 @@ else
   log "arc init --tier $TIER --provider $PROVIDER..."
   "$ARC_BIN" init --tier "$TIER" --provider "$PROVIDER"
 fi
+# The work-events key signs run callbacks (SPEC-088). A box initialised before
+# it has none, and init above is skipped there; minting is idempotent.
+"$ARC_BIN" callback key || echo "  ! work-events key not minted; run callbacks stay unavailable" >&2
 
 # --- 4. config overlays (idempotent) --------------------------------------
 log "Applying config overlays..."
