@@ -939,6 +939,38 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     "app principal abuse (ASI03, ASI07)": (
         "packages/arcui/tests/security/test_app_principal_abuse.py",
     ),
+    # SPEC-088 (work intake, events and callbacks): a missing or wrong-scope principal
+    # on every new route (run intake, run reads, task create, event fire, gate, work-event
+    # stream/page/keys); a cross-principal run read answered exactly like a missing run;
+    # workflow, node and intake keys smuggled in caller metadata (kept under metadata.app,
+    # never a node or an intake row); bodies over 64 KiB refused before any parse; a
+    # caller claiming a schedule, pulse or workflow run purpose; an undeclared event or an
+    # unsigned or edited bundle at every tier; a replayed event key (same run, conflict on
+    # another body, another principal gets its own run); a forged arc_trigger; gate notes
+    # and payloads carrying prompt injection and fence breakers (only ever inside the
+    # labelled human-data JSON block); escalation to an agent DID or an agent-only role
+    # (validator and run start); a forged escalated_to; a timeout racing a decision;
+    # callbacks to loopback, RFC1918, link-local and metadata addresses (IPv4-mapped,
+    # NAT64 and 6to4 forms), DNS rebinding between check and connect, redirects to
+    # internal hosts, look-alike origins, http above personal, classification above the
+    # entry clearance; a callback signed with the operator key; a restored older
+    # allowlist record; an app on the allowlist routes; a callback with no signer (503).
+    "work intake, events and callbacks (SPEC-088)": (
+        "packages/arcui/tests/security/test_work_intake_abuse.py",
+        "packages/arcui/tests/security/test_principal_pre_auth_abuse.py",
+        "packages/arcteam/tests/security/test_workflow_event_abuse.py",
+        "packages/arcui/tests/security/test_callback_ssrf.py",
+        "packages/arcui/tests/test_callback_policy.py",
+        "packages/arcui/tests/test_callback_dispatcher.py",
+        "packages/arcui/tests/test_callback_allowlist_routes.py",
+        "packages/arcui/tests/test_run_reads_scoped.py",
+        "packages/arcui/tests/test_workflow_event_and_gate_routes.py",
+        "packages/arctrust/tests/unit/test_callback_allowlist.py",
+        "packages/arctrust/tests/unit/test_work_event_signer.py",
+        "packages/arcteam/tests/unit/workflow/test_control_plane_fire_event.py",
+        "packages/arcteam/tests/unit/workflow/test_escalate_to_user_roster.py",
+        "packages/arcagent/tests/unit/modules/tasks/test_node_section_human_data.py",
+    ),
 }
 
 

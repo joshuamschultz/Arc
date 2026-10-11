@@ -19,6 +19,7 @@ from arctrust.paths import arc_state, default_operator_key_path, workflows_dir
 from arcteam.workflow import parse_definition, validate_definition
 from arcteam.workflow.control_plane import WorkflowControlPlane
 from arcteam.workflow.runner import build_workflow_runner
+from arcteam.workflow.runner_contracts import TriggerContext
 
 AGENT_DID = "did:arc:local:agent/1111aaaa"
 WORKFLOW = """
@@ -98,7 +99,13 @@ async def test_agent_or_schedule_cannot_run_its_own_unsigned_workflow(
 ) -> None:
     plane, sink = _plane(agent_authored, tier)
 
-    result = await plane.run("selfwritten", input={}, initiator=initiator, actor_did=AGENT_DID)
+    result = await plane.run(
+        "selfwritten",
+        input={},
+        initiator=initiator,
+        actor_did=AGENT_DID,
+        trigger=TriggerContext("manual"),
+    )
 
     assert not result.ok
     assert result.run is None
@@ -110,12 +117,22 @@ async def test_agent_or_schedule_cannot_run_its_own_unsigned_workflow(
 async def test_operator_draft_run_is_personal_only_and_audited(agent_authored: Any) -> None:
     plane, sink = _plane(agent_authored, "personal")
 
-    result = await plane.run("selfwritten", input={}, initiator="operator", actor_did="did:op")
+    result = await plane.run(
+        "selfwritten",
+        input={},
+        initiator="operator",
+        actor_did="did:op",
+        trigger=TriggerContext("manual"),
+    )
 
     assert result.ok
     assert any(e.action == "workflow.run.unsigned_draft" for e in sink.events)
     plane_ent, _ = _plane(agent_authored, "enterprise")
     refused = await plane_ent.run(
-        "selfwritten", input={}, initiator="operator", actor_did="did:op"
+        "selfwritten",
+        input={},
+        initiator="operator",
+        actor_did="did:op",
+        trigger=TriggerContext("manual"),
     )
     assert not refused.ok

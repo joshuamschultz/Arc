@@ -21,22 +21,23 @@ Principals live in the account authority (Vault or OpenBao). That is the same se
 
 There are ten scopes. Nothing else is accepted. An unknown scope is refused with HTTP 400.
 
-An app can reach only the routes in one table. Today that table has eight rows.
+An app can reach only the routes in one table. See the
+[Work intake and events API](../reference/work-intake-api.md) for each route.
 
-| Scope | Route rows today | Status |
+| Scope | Routes | Status |
 |---|---|---|
 | `workflows:run` | `POST /api/workflows/{id}/run` | Reachable now |
-| `runs:read` | `GET /api/workflow-runs/{id}`, `GET /api/runs/{run_id}/timeline` | Reachable now |
-| `gates:resolve` | `POST /api/workflow-tasks/{id}/gate` | Reachable now |
+| `workflows:event` | `POST /api/workflows/{id}/events/{name}` | Reachable now |
+| `runs:start` | `POST /api/runs` | Reachable now |
+| `runs:read` | `GET /api/workflow-runs/{id}`, `GET /api/runs/{run_id}`, and its `/timeline`, `/audit`, `/recalls` | Reachable now |
+| `gates:resolve` | `POST /api/workflow-tasks/{id}/gate` (also approve and reject on a gate task) | Reachable now |
 | `tasks:write` | `POST /api/team/tasks`, `POST /api/tasks/{id}/approve`, `POST /api/tasks/{id}/reject` | Reachable now |
 | `inbox:send` | `POST /api/agents/{agent}/inbox` | Reachable now |
-| `runs:start` | none yet | Arrives with SPEC-088 |
-| `workflows:event` | none yet | Arrives with SPEC-088 |
-| `events:subscribe` | none yet | Arrives with SPEC-088 |
+| `events:subscribe` | `GET /api/work-events/stream`, `GET /api/work-events`, `GET /api/work-events/keys` | Reachable now |
 | `memory:write` | none yet | Arrives with a later spec |
 | `feedback:write` | none yet | Arrives with a later spec |
 
-You can issue the five later scopes now. They do nothing until their routes ship. Later specs add rows. They never add new scope kinds.
+You can issue the two later scopes now. They do nothing until their routes ship. Later specs add rows. They never add new scope kinds.
 
 Two groups matter for the rules below:
 
@@ -66,7 +67,10 @@ Config lives in `[ui.principals]`:
 require_signed_requests = false   # enterprise only; federal forces true
 require_named_decider   = false   # enterprise; federal forces true; ignored at personal
 rate_per_minute         = 600     # per principal
+pre_auth_rate_per_minute = 1200   # per client address, checked before the credential
 ```
+
+Before Arc checks an app credential, it limits each client address to `pre_auth_rate_per_minute` and caps the body at 128 KiB. The address is the network peer. Arc does not read `X-Forwarded-For`. Behind a reverse proxy, all apps share the proxy's limit.
 
 The tier itself comes from your security tier setting. This table cannot loosen it.
 

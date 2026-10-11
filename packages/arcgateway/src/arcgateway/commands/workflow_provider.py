@@ -92,7 +92,7 @@ class GatewayWorkflowProvider:
                 task_id,
                 decision=GATE_WORDS[decision],
                 notes=notes,
-                actor_did=actor_did,
+                decider_did=actor_did,
                 actor_roles=roles,
             )
         except GateNotAuthorizedError:
@@ -105,9 +105,15 @@ class GatewayWorkflowProvider:
         plane = self._control_plane()
         if plane is None:
             return "Workflows aren't running on this deployment yet."
+        from arcteam.workflow.runner_contracts import TriggerContext
+
         run_input = {"text": args} if args else {}
         result = await plane.run(
-            workflow_id, input=run_input, initiator="chat", actor_did=actor_did
+            workflow_id,
+            input=run_input,
+            initiator="chat",
+            actor_did=actor_did,
+            trigger=TriggerContext("manual"),
         )
         if result.ok and result.run is not None:
             return f"Started {workflow_id} (run {result.run.run_id})."

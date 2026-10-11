@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from arcteam.workflow.runner_contracts import TriggerContext
+
 from .conftest import OPS_DID, SALES_DID, Definition, Node, complete_node, fail_node, task_id
 from .test_runner_frontier import build
 
-_START = {"initiator": "operator", "initiator_did": "did:arc:x/1"}
+_START = {
+    "initiator": "operator",
+    "initiator_did": "did:arc:x/1",
+    "trigger": TriggerContext("manual"),
+}
 
 
 def _chain(on_failure: str) -> Definition:

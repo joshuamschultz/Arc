@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import hashlib
+from datetime import UTC, datetime, timedelta
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from arctrust import generate_keypair
+from arctrust.replay import CLOCK_SKEW_SECONDS
 from arctrust.signer import InProcessSigner
 
+from arcteam import messenger as messenger_module
 from arcteam.audit import AuditLogger
 from arcteam.crypto import MessageSigner
 from arcteam.messenger import MessagingService
@@ -165,6 +169,23 @@ class TestVerifyOnConsume:
         # Re-consuming the very same nonce is a replay.
         second = await svc.receive("arc.agent.a2", "agent://a2")
         assert second == []
+        dlq = await svc.dlq_list()
+        assert any(e["meta"].get("dlq_reason") == "replay" for e in dlq)
+
+    async def test_future_stamped_message_beyond_clock_skew_goes_to_dlq(self) -> None:
+        """A validly signed message stamped beyond the skew bound is never delivered."""
+        svc, _, _ = await _service_with_signer()
+        ahead = datetime.now(UTC) + timedelta(seconds=CLOCK_SKEW_SECONDS + 60)
+
+        class _AheadClock(datetime):
+            @classmethod
+            def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]  # fake clock keeps datetime's signature
+                return ahead if tz is None else ahead.astimezone(tz)
+
+        with patch.object(messenger_module, "datetime", _AheadClock):
+            await svc.send(Message(sender="agent://a1", to=["agent://a2"], body="hi"))
+        received = await svc.receive("arc.agent.a2", "agent://a2")
+        assert received == []
         dlq = await svc.dlq_list()
         assert any(e["meta"].get("dlq_reason") == "replay" for e in dlq)
 

@@ -93,6 +93,18 @@ class CustodyTransit(VaultTransit, TransitCipher, Protocol):
     """
 
 
+@runtime_checkable
+class KeyProvisioningTransit(CustodyTransit, Protocol):
+    """A custody transit that can also mint a named non-exportable signing key.
+
+    Used only by setup paths that provision a dedicated key beside the operator
+    key (SPEC-088 COMP-019). Creating is idempotent: an existing key is never
+    replaced, and the key's public half is returned either way.
+    """
+
+    def create_signing_key(self, key_ref: str) -> bytes: ...
+
+
 # ---------------------------------------------------------------------------
 # ECDSA-P256 primitives (PyCA cryptography — the FIPS-approvable path)
 # ---------------------------------------------------------------------------
@@ -288,6 +300,31 @@ class FileNotaryTransit:
             public_key = _ecdsa_public_bytes(seed)
         (keystore / f"{key_ref}{cls._PUB_SUFFIX}").write_bytes(public_key)
 
+    def create_signing_key(self, key_ref: str) -> bytes:
+        """Mint ``key_ref`` in the keystore unless it exists; return its public key.
+
+        The seed file is created with ``O_EXCL`` so two concurrent setups cannot
+        both write it, and an existing key is never replaced (replacing would void
+        every signature already made under it). The seed is written once and
+        dropped; signing still happens only in the notary child process.
+        """
+        import os
+
+        if key_ref in ("", ".", "..") or Path(key_ref).name != key_ref or "\0" in key_ref:
+            raise SignerError(f"invalid notary key reference {key_ref!r}")
+        self._keystore.mkdir(mode=0o700, parents=True, exist_ok=True)
+        seed_path = self._keystore / f"{key_ref}{self._SEED_SUFFIX}"
+        try:
+            fd = os.open(seed_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return self.public_key(key_ref)
+        seed = os.urandom(keypair.KEY_SIZE)
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(seed)
+        public_key = InProcessSigner(seed, self._algorithm).public_key
+        (self._keystore / f"{key_ref}{self._PUB_SUFFIX}").write_bytes(public_key)
+        return public_key
+
     def sign(self, key_ref: str, message: bytes) -> bytes:
         import os
         import subprocess
@@ -379,6 +416,7 @@ __all__ = [
     "CustodyTransit",
     "FileNotaryTransit",
     "InProcessSigner",
+    "KeyProvisioningTransit",
     "Signer",
     "SignerConfig",
     "SignerError",

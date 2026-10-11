@@ -19,6 +19,8 @@ Two rules the operations enforce on everybody equally:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -26,8 +28,27 @@ from typing import Any
 
 from arctrust.audit import AuditEvent, AuditSink, NullSink, emit
 
-from .errors import GateNotAuthorizedError, PlaceholderOwnerError, WorkflowError
-from .runner import TEST_RUN_MAX_COST_USD, NodeRetryRefusedError, WorkflowRunner
+from .errors import (
+    GateNotAuthorizedError,
+    PlaceholderOwnerError,
+    WorkflowError,
+    WorkflowNotFoundError,
+)
+from .gate_outcome import (
+    DATA_DECISIONS,
+    DECISION_WORDS,
+    DECISIONS,
+    OPEN_PAYLOAD_SCHEMA,
+    Decision,
+    outcome_envelope,
+    settled_status,
+)
+from .runner import (
+    TEST_RUN_MAX_COST_USD,
+    NodeRetryRefusedError,
+    WorkflowInputRefusedError,
+    WorkflowRunner,
+)
 from .runner_contracts import (
     BundleSpec,
     DefinitionParser,
@@ -37,19 +58,16 @@ from .runner_contracts import (
     RunRecord,
     RunStoreLike,
     Tier,
+    TriggerContext,
+    TriggerSpec,
     ValidationIssueLike,
 )
+from .schema_check import check
+from .stores import RunIdentityConflictError
 from .templates import load_template
 from .validator import approver_roles
 
 logger = logging.getLogger(__name__)
-
-#: What a reviewer may choose, mapped to what the runner reads off the row.
-_GATE_DECISIONS: dict[str, str] = {
-    "approve": "approved",
-    "fail_run": "rejected",
-    "return_for_revision": "returned_for_revision",
-}
 
 #: The role an AUTHENTICATED operator surface (the dashboard's operator session,
 #: the CLI holding the operator key) asserts. Operator decides every gate.
@@ -75,12 +93,92 @@ class OperationIssue:
     admissible: tuple[str, ...] = ()
     #: Command-line wording for the fix. A terminal may print it; a page never does.
     cli_hint: str = ""
+    #: Machine-readable refusal class a surface maps to a status
+    #: (``not_found``, ``invalid_payload``, ``conflict``); empty when unclassified.
+    code: str = ""
+
+
+#: Domain tag bound into every event trigger digest (D-842).
+EVENT_DIGEST_DOMAIN = "arc.workflow-event.v1"
 
 
 def _refusal_issue(exc: Exception) -> OperationIssue:
     """A refused run as an issue, carrying the command hint the error holds (if any)."""
     hint = exc.cli_hint if isinstance(exc, PlaceholderOwnerError) else ""
     return OperationIssue(None, None, str(exc), cli_hint=hint)
+
+
+def _run_refusal_issues(exc: Exception) -> tuple[OperationIssue, ...]:
+    """A refused start as issues: one per failing input field, or one classified refusal."""
+    if isinstance(exc, WorkflowInputRefusedError):
+        return tuple(
+            OperationIssue(
+                issue.node_id,
+                issue.field,
+                issue.error,
+                observed=issue.observed,
+                admissible=issue.admissible,
+                code="invalid_payload",
+            )
+            for issue in exc.issues
+        )
+    if isinstance(exc, RunIdentityConflictError):
+        return (OperationIssue(None, "run_id", str(exc), code="conflict"),)
+    return (_refusal_issue(exc),)
+
+
+def _refused(issue: OperationIssue) -> ControlPlaneResult:
+    return ControlPlaneResult(ok=False, errors=(issue,))
+
+
+class _UnreadableSchema:
+    """A signed node declares a payload schema that could not be read."""
+
+
+_UNREADABLE = _UnreadableSchema()
+
+
+def _admitted_payload(
+    schema: Mapping[str, Any] | _UnreadableSchema | None,
+    decision: Decision,
+    payload: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], tuple[OperationIssue, ...]]:
+    """The payload a decision records, or the ``invalid_payload`` issues refusing it.
+
+    Only ``approved`` / ``submitted`` carry data; the other outcomes record
+    ``{}``. ``schema`` is the signed node's, read from the run's pinned bundle
+    (``None`` when the node declares none); the row's stamped copy is display
+    only and never consulted here. An unreadable schema refuses every payload.
+    """
+    if decision not in DATA_DECISIONS:
+        return {}, ()
+    instance: Any = {} if payload is None else payload
+    refusal = None
+    if not isinstance(instance, Mapping):
+        refusal = "payload must be a JSON object"
+    elif isinstance(schema, _UnreadableSchema):
+        refusal = "the step's payload schema cannot be read"
+    if refusal is not None:
+        return {}, (OperationIssue(None, "payload", refusal, code="invalid_payload"),)
+    found = check(instance, schema if isinstance(schema, Mapping) else OPEN_PAYLOAD_SCHEMA)
+    if found:
+        return {}, tuple(
+            OperationIssue(
+                None,
+                f"payload.{issue.field}" if issue.field else "payload",
+                issue.error,
+                observed=issue.observed,
+                admissible=tuple(issue.admissible),
+                code="invalid_payload",
+            )
+            for issue in found
+        )
+    return dict(instance), ()
+
+
+def _event_digest(*parts: str) -> str:
+    """sha256 over ``parts`` as a JSON array, so no field can bleed into the next."""
+    return hashlib.sha256(json.dumps(list(parts), separators=(",", ":")).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -91,6 +189,9 @@ class ControlPlaneResult:
     errors: tuple[ValidationIssueLike | OperationIssue, ...] = ()
     bundle: BundleSpec | None = None
     run: RunRecord | None = None
+    #: True when a pinned run id named a run that already existed: the start
+    #: was a replay, so a surface answers "already done", not "created".
+    replayed: bool = False
 
 
 @dataclass
@@ -310,6 +411,7 @@ class WorkflowControlPlane:
                 input={},
                 initiator="operator",
                 initiator_did=actor_did,
+                trigger=TriggerContext("manual"),
                 mode="test",
             )
         except Exception as exc:
@@ -336,22 +438,27 @@ class WorkflowControlPlane:
         input: Mapping[str, Any],  # noqa: A002 — the definition's own vocabulary
         initiator: Initiator,
         actor_did: str,
+        trigger: TriggerSpec,
         run_id: str | None = None,
         trigger_digest: str | None = None,
         detached: bool = False,
     ) -> ControlPlaneResult:
-        """Start a run. The dashboard, the CLI, an agent and a schedule all land here;
-        ``initiator`` names which, and gates unsigned drafts.
+        """Start a run. The dashboard, the CLI, an agent, a schedule and an event all
+        land here; ``initiator`` names which, and gates unsigned drafts. ``trigger``
+        names what started it and selects the schema the input must satisfy.
 
         ``detached=True`` creates the run without the singleton lease; the
-        lease-holding service runner advances it on its next tick.
+        lease-holding service runner advances it on its next tick. A replay of a
+        pinned ``run_id`` returns the existing run and is audited as a replay,
+        never as a second start.
         """
         try:
-            record = await self._runner.start_run(
+            record, created = await self._runner.start_or_replay(
                 workflow_id,
                 input=input,
                 initiator=initiator,
                 initiator_did=actor_did,
+                trigger=trigger,
                 run_id=run_id,
                 trigger_digest=trigger_digest,
                 detached=detached,
@@ -361,17 +468,98 @@ class WorkflowControlPlane:
                 _Operation("workflow.run.started", workflow_id, "refused", {"error": str(exc)}),
                 actor_did,
             )
-            return ControlPlaneResult(ok=False, errors=(_refusal_issue(exc),))
+            return ControlPlaneResult(ok=False, errors=_run_refusal_issues(exc))
         self._emit(
             _Operation(
                 "workflow.run.started",
                 f"{workflow_id}/{record.run_id}",
-                "started",
-                {"run_id": record.run_id},
+                "started" if created else "replayed",
+                {"run_id": record.run_id, "trigger": trigger.kind},
             ),
             actor_did,
         )
-        return ControlPlaneResult(ok=True, run=record)
+        return ControlPlaneResult(ok=True, run=record, replayed=not created)
+
+    async def fire_event(
+        self,
+        workflow_id: str,
+        name: str,
+        payload: Mapping[str, Any],
+        *,
+        idempotency_key: str,
+        actor_did: str,
+        on_behalf_of: str | None,
+    ) -> ControlPlaneResult:
+        """Start a run from a declared event (SPEC-088 COMP-007, D-842, D-843).
+
+        The run id is derived from (workflow, event, principal, key), so an
+        identical repeat returns the same run and the same key with another
+        payload is a ``conflict``. The key is scoped to the principal: one
+        caller can neither replay nor block another's event. The run starts
+        through :meth:`run` with initiator ``event``, so an unsigned bundle is
+        refused at every tier and the payload is validated against the event's
+        schema before any run exists.
+        """
+        missing = self._undeclared_event(workflow_id, name)
+        if missing is not None:
+            self._emit(
+                _Operation(
+                    "workflow.event.fired",
+                    workflow_id,
+                    missing.code or "refused",
+                    {"event": name, "on_behalf_of": on_behalf_of},
+                ),
+                actor_did,
+            )
+            return ControlPlaneResult(ok=False, errors=(missing,))
+        identity = (workflow_id, name, actor_did, idempotency_key)
+        run_id = "evt-" + _event_digest(*identity)[:24]
+        result = await self.run(
+            workflow_id,
+            input=payload,
+            initiator="event",
+            actor_did=actor_did,
+            trigger=TriggerContext("event", name),
+            run_id=run_id,
+            trigger_digest=_event_digest(EVENT_DIGEST_DOMAIN, *identity),
+        )
+        self._emit(
+            _Operation(
+                "workflow.event.fired",
+                f"{workflow_id}/{run_id}",
+                "ok" if result.ok else "refused",
+                {"event": name, "run_id": run_id, "on_behalf_of": on_behalf_of},
+            ),
+            actor_did,
+        )
+        return result
+
+    def _undeclared_event(self, workflow_id: str, name: str) -> OperationIssue | None:
+        """``not_found`` when the workflow or its event does not exist, a plain
+        refusal when the bundle cannot be read; else ``None``.
+
+        Reads the unverified render view only to name the miss precisely; trust
+        is decided by the runner, which refuses an undeclared event itself too.
+        """
+        try:
+            definition = self._definitions.load(workflow_id).definition
+        except (KeyError, WorkflowNotFoundError):
+            return OperationIssue(
+                None, "workflow_id", f"no workflow {workflow_id!r}", code="not_found"
+            )
+        except (WorkflowError, ValueError) as exc:
+            return OperationIssue(None, "workflow_id", str(exc))
+        declared = tuple(sorted(event.name for event in definition.events))
+        if name in declared:
+            return None
+        return OperationIssue(
+            None,
+            "event",
+            f"workflow {workflow_id!r} declares no event {name!r}",
+            observed=name,
+            admissible=declared,
+            code="not_found",
+        )
 
     async def resolve_gate(
         self,
@@ -379,71 +567,101 @@ class WorkflowControlPlane:
         *,
         decision: str,
         notes: str = "",
-        actor_did: str,
+        payload: Mapping[str, Any] | None = None,
+        decider_did: str,
+        on_behalf_of: str | None = None,
         actor_roles: frozenset[str],
     ) -> ControlPlaneResult:
-        """Resolve a waiting gate: approve, fail the run, or return for revision.
+        """Resolve a waiting gate or human_input row.
 
-        Only an approver decides (alpha-2 #67): the operator, a DID the gate's
-        signed ``approvers`` lists, or a holder of a listed ``role:<name>``.
+        A gate takes ``approve``, ``fail_run`` or ``return_for_revision``; a
+        human_input takes ``submit`` or ``fail_run`` (D-845). ``decider_did`` is
+        who decides: the person an app acts for, else the authenticated caller
+        (SPEC-087 ``acting_identity``); ``on_behalf_of`` names that person when
+        an app relayed the decision.
+
+        Only an approver decides (alpha-2 #67): the operator, a DID the step's
+        signed ``approvers`` lists, a holder of a listed ``role:<name>``, or the
+        signed ``escalate_to`` once a passed deadline escalated the row.
         ``actor_roles`` is what the CALLER established from an authenticated
-        identity — the operator session, or the team registry's record for a
-        paired chat user — never anything the decider typed. Anyone else gets
+        identity, never anything the decider typed. Anyone else gets
         :class:`GateNotAuthorizedError` and an audited ``workflow.gate.denied``.
-        A gate decides once: resolving a settled gate again is refused, so a
-        replayed approval cannot ride on the original.
 
-        The reviewer's three outcomes are not a task approve/reject (REQ-247):
-        returning for revision sends the reviewed work back to whoever produced
-        it and the run continues, which no task status can express. So the
-        decision is WRITTEN ON THE ROW and the runner acts on it — the row's
-        status carries only whether the gate is settled.
+        ``approve`` / ``submit`` carry ``payload``, validated against the signed
+        node's schema, read from the run's pinned bundle (never the row's stamped
+        copy, which is display only), and capped at 64 KiB; a refusal is an
+        ``invalid_payload`` issue and the row keeps waiting. The outcome envelope
+        (D-844) and the status land in ONE conditional write on
+        ``status == review``, so a step decides once: a second decision, or one
+        racing a passed deadline, finds nothing to update and is refused.
 
         Gate resolution exists only here (REQ-246). No agent-callable tool
         reaches it; the dashboard route, the CLI, and the channel card are all
         callers of this one method, and each one names the deciding human.
         """
-        if decision not in _GATE_DECISIONS:
-            return ControlPlaneResult(
-                ok=False,
-                errors=(
-                    OperationIssue(
-                        None,
-                        "decision",
-                        f"unknown gate decision {decision!r}",
-                        decision,
-                        tuple(_GATE_DECISIONS),
-                    ),
-                ),
+        if decision not in DECISION_WORDS:
+            return _refused(
+                OperationIssue(
+                    None,
+                    "decision",
+                    f"unknown gate decision {decision!r}",
+                    decision,
+                    DECISION_WORDS,
+                )
             )
         tasks = self._runner.tasks
         task = await tasks.get(task_id)
-        if task is None or str(task.metadata.get("node_kind", "")) != "gate":
-            self._emit(_Operation("workflow.gate.resolved", task_id, "refused"), actor_did)
-            return ControlPlaneResult(
-                ok=False,
-                errors=(OperationIssue(None, None, f"task {task_id!r} is not a workflow gate"),),
+        kind = "" if task is None else str(task.metadata.get("node_kind", ""))
+        if task is None or kind not in DECISIONS:
+            self._emit(_Operation("workflow.gate.resolved", task_id, "refused"), decider_did)
+            return _refused(
+                OperationIssue(
+                    None, None, f"task {task_id!r} is not a workflow gate", code="not_found"
+                )
             )
-        await self._authorize_gate(task, decision, actor_did, actor_roles)
-        recorded = _GATE_DECISIONS[decision]
-        metadata = {
-            **dict(task.metadata),
-            "gate_decision": recorded,
-            "gate_notes": notes,
-            "gate_actor_did": actor_did,
-        }
-        # ``failed`` only for the outcome that really does fail the run; the
-        # other two settle the gate and let the runner take it from there.
-        status = "failed" if recorded == "rejected" else "done"
+        await self._authorize_gate(task, decision, decider_did, actor_roles)
+        allowed = DECISIONS[kind]
+        if decision not in allowed:
+            return _refused(
+                OperationIssue(
+                    None,
+                    "decision",
+                    f"a {kind} step does not take {decision!r}",
+                    decision,
+                    tuple(allowed),
+                )
+            )
+        recorded = allowed[decision]
+        accepted, issues = _admitted_payload(
+            await self._payload_schema(task, recorded), recorded, payload
+        )
+        if issues:
+            self._emit(
+                _Operation("workflow.gate.resolved", task_id, "invalid_payload"), decider_did
+            )
+            return ControlPlaneResult(ok=False, errors=issues)
+        envelope = outcome_envelope(
+            recorded,
+            notes=notes,
+            payload=accepted,
+            decided_by=decider_did,
+            on_behalf_of=on_behalf_of,
+            decided_at=self._runner.now(),
+            timed_out=False,
+        )
         updated = await tasks.update_if(
             task_id,
-            {"status": status, "metadata": metadata, "resolution": notes or recorded},
+            {
+                "status": settled_status(recorded),
+                "output": envelope,
+                "resolution": notes or recorded,
+            },
             where={"status": "review"},
-            actor_did=actor_did,
+            actor_did=decider_did,
         )
         if updated is None:
             current = await tasks.get(task_id)
-            replayed = current is not None and current.metadata.get("gate_decision") == recorded
+            replayed = current is not None and (current.output or {}).get("decision") == recorded
             self._emit(
                 _Operation(
                     "workflow.gate.resolved",
@@ -451,26 +669,26 @@ class WorkflowControlPlane:
                     "replayed" if replayed else "conflict",
                     {"decision": recorded},
                 ),
-                actor_did,
+                decider_did,
             )
-            return ControlPlaneResult(
-                ok=False,
-                errors=(OperationIssue(None, "status", "gate was already resolved"),),
+            return _refused(
+                OperationIssue(None, "status", "gate was already resolved", code="conflict")
             )
+        run_id = str(task.metadata.get("flow_run_id", ""))
         self._emit(
             _Operation(
                 "workflow.gate.resolved",
                 task_id,
                 recorded,
                 {
-                    "run_id": str(task.metadata.get("flow_run_id", "")),
+                    "run_id": run_id,
                     "decision": recorded,
                     "notes": notes,
+                    "on_behalf_of": on_behalf_of,
                 },
             ),
-            actor_did,
+            decider_did,
         )
-        run_id = str(task.metadata.get("flow_run_id", ""))
         if not run_id:
             return ControlPlaneResult(ok=True)
         # Advance now rather than on the next tick: the reviewer is watching.
@@ -649,6 +867,18 @@ class WorkflowControlPlane:
             actor_did,
         )
         raise GateNotAuthorizedError(task.id, actor_did)
+
+    async def _payload_schema(
+        self, task: Any, decision: Decision
+    ) -> Mapping[str, Any] | _UnreadableSchema | None:
+        """The signed node's payload schema; an unreadable one refuses (fail closed)."""
+        if decision not in DATA_DECISIONS:
+            return None
+        try:
+            return await self._runner.gate_payload_schema(task)
+        except Exception:  # reason: an unreadable schema must refuse, never open the step
+            logger.warning("gate %s: payload schema unreadable; refusing", task.id, exc_info=True)
+            return _UNREADABLE
 
     def _emit(self, operation: _Operation, actor_did: str) -> None:
         emit(

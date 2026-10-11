@@ -62,7 +62,7 @@ from arcteam.workflow.control_plane import (
 from arcteam.workflow.errors import PlaceholderOwnerError
 from arcteam.workflow.migrate import check_bundle, check_store, migrate_store
 from arcteam.workflow.models import WORKFLOW_ID_PATTERN
-from arcteam.workflow.runner_contracts import Tier, ValidationIssueLike
+from arcteam.workflow.runner_contracts import Tier, TriggerContext, ValidationIssueLike
 from arcteam.workflow.service import WorkflowRunnerService
 from arcteam.workflow.templates import list_templates
 from arctrust import WormSink
@@ -790,6 +790,7 @@ def _run_workflow(args: argparse.Namespace) -> None:
                         input=run_input,
                         initiator="operator",
                         actor_did=actor_did,
+                        trigger=TriggerContext("manual"),
                         detached=True,
                     )
                 )
@@ -829,7 +830,11 @@ async def _run_attached(
     try:
         result = _ok_or_exit(
             await plane.run(
-                workflow_id, input=run_input, initiator="operator", actor_did=actor_did
+                workflow_id,
+                input=run_input,
+                initiator="operator",
+                actor_did=actor_did,
+                trigger=TriggerContext("manual"),
             )
         )
         record = result.run
@@ -990,7 +995,7 @@ def _gate(args: argparse.Namespace) -> None:
                 args.task_id,
                 decision=GATE_WORDS[args.decision],
                 notes=args.notes or "",
-                actor_did=actor_did,
+                decider_did=actor_did,
                 actor_roles=frozenset({OPERATOR_ROLE}),
             )
         )

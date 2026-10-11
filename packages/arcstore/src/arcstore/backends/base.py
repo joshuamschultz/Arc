@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
 
 from arcstore.mutation_fence import RunnerFence
@@ -30,6 +31,9 @@ SKILL_BODIES_TABLE = "skill_candidate_bodies"
 MUTABLE_RECORDS_TABLE = "mutable_records"
 APPROVAL_OUTBOX_TABLE = "approval_outbox"
 MAIL_OUTBOX_TABLE = "mail_outbox"
+# SPEC-088 COMP-012: the ordered work-event log and its callback outbox.
+WORK_EVENTS_TABLE = "work_events"
+WORK_EVENT_DELIVERIES_TABLE = "work_event_deliveries"
 
 STORE_TABLES = frozenset(
     (
@@ -39,6 +43,25 @@ STORE_TABLES = frozenset(
         SKILL_BODIES_TABLE,
         APPROVAL_OUTBOX_TABLE,
         MAIL_OUTBOX_TABLE,
+        WORK_EVENTS_TABLE,
+        WORK_EVENT_DELIVERIES_TABLE,
+    )
+)
+
+# Work-event fields stored as their own columns. Only these may appear in a
+# ``read_work_events`` filter; a backend interpolates the name, so the set is
+# the SQL-injection allowlist as well as the contract.
+WORK_EVENT_FILTER_FIELDS: frozenset[str] = frozenset(
+    (
+        "kind",
+        "agent_did",
+        "workflow_id",
+        "run_id",
+        "node_id",
+        "task_id",
+        "correlation_id",
+        "status",
+        "classification",
     )
 )
 
@@ -323,6 +346,57 @@ class ArcStoreBackend(Protocol):
     ) -> bool: ...
 
     async def dead_letter_mail(self, consumer_id: str, event_id: str, *, reason: str) -> bool: ...
+
+    async def append_work_event(
+        self, event: dict[str, Any], *, callback_url: str | None, now: datetime
+    ) -> bool:
+        """Insert ``event`` once per ``event_id``; return whether this call inserted it.
+
+        The store assigns ``seq``. When ``callback_url`` is set, one ``pending``
+        delivery row due at ``now`` is inserted in the same transaction.
+        """
+        ...
+
+    async def read_work_events(
+        self,
+        after_seq: int,
+        *,
+        limit: int,
+        where: Mapping[str, str | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Events with ``seq > after_seq`` in increasing ``seq`` order, ``seq`` included.
+
+        ``where`` is column equality over :data:`WORK_EVENT_FILTER_FIELDS`.
+        """
+        ...
+
+    async def get_work_event(self, event_id: str) -> dict[str, Any] | None:
+        """The stored event for ``event_id`` with its ``seq``, or ``None``."""
+        ...
+
+    async def claim_work_event_deliveries(
+        self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
+    ) -> list[dict[str, Any]]:
+        """Lease up to ``limit`` due ``pending`` deliveries to ``consumer_id``."""
+        ...
+
+    async def settle_work_event_delivery(
+        self,
+        event_id: str,
+        *,
+        state: str,
+        next_attempt_at: datetime | None,
+        error: str | None,
+        consumer_id: str | None,
+        now: datetime,
+    ) -> bool:
+        """Record a leased delivery's outcome; return whether a lease was settled.
+
+        ``state="pending"`` with ``next_attempt_at`` schedules a retry; any
+        other state is terminal. With ``consumer_id`` set, only that consumer's
+        live lease may be settled.
+        """
+        ...
 
 
 StorageBackend = ArcStoreBackend

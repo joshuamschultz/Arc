@@ -5,8 +5,8 @@ bytes that a signature can bind to.
 
 * :func:`dump_toml` writes the canonical ``workflow.toml``. It is deterministic
   — same definition, same bytes — so a resave never shows a spurious diff.
-* :func:`file_manifest` digests every schema, prompt, and script the definition
-  references, keyed by bundle-relative path.
+* :func:`file_manifest` digests every schema (input, event, node output),
+  prompt, and script the definition references, keyed by bundle-relative path.
 * :func:`canonical_bytes` and :func:`content_hash` bind those two together.
 
 The hash is taken over a canonical JSON projection of the *parsed* document
@@ -40,10 +40,15 @@ UNRESOLVABLE = "unresolvable"
 
 
 def referenced_files(definition: WorkflowDefinition) -> tuple[str, ...]:
-    """Every schema, prompt, and script path the definition names, deduplicated."""
+    """Every schema, prompt, and script path the definition names, deduplicated.
+
+    Event schemas are included: an event payload is validated against its
+    schema, so a schema outside the signature could be swapped after signing.
+    """
     paths: list[str] = []
     if definition.input_spec is not None:
         paths.append(definition.input_spec.schema_ref)
+    paths.extend(event.schema_ref for event in definition.events)
     for node in definition.nodes:
         if node.output_schema is not None:
             paths.append(node.output_schema)
@@ -90,9 +95,9 @@ def dump_toml(document: Mapping[str, Any]) -> str:
     """Render a workflow document as TOML that parses back to the same document.
 
     Deliberately narrow: it handles exactly the shapes a workflow document can
-    hold — a header table, optional trigger and input tables, and an
-    array-of-tables of nodes whose values are scalars, arrays of scalars,
-    inline tables, or arrays of inline tables.
+    hold — a header table, optional trigger and input tables, an optional
+    array-of-tables of events, and an array-of-tables of nodes whose values are
+    scalars, arrays of scalars, inline tables, or arrays of inline tables.
     """
     lines: list[str] = []
     for table in ("workflow", "trigger", "input"):
@@ -100,6 +105,10 @@ def dump_toml(document: Mapping[str, Any]) -> str:
             lines.append(f"[{table}]")
             lines.extend(_emit_pairs(document[table]))
             lines.append("")
+    for event in document.get("event", ()):
+        lines.append("[[event]]")
+        lines.extend(_emit_pairs(event))
+        lines.append("")
     for node in document.get("node", ()):
         lines.append("[[node]]")
         lines.extend(_emit_pairs(node))

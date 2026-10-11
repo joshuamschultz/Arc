@@ -166,6 +166,8 @@ class Node:
     # gate
     gate: str | None = None
     approvers: tuple[str, ...] = ()
+    on_timeout: str = "fail"
+    escalate_to: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +185,9 @@ class Definition:
     channel: str | None = None
     budget: Budget | None = None
     nodes: tuple[Node, ...] = ()
+    # SPEC-088: the runner reads the governing schema off these (none declared).
+    input_spec: Any = None
+    events: tuple[Any, ...] = ()
 
     @property
     def node_ids(self) -> tuple[str, ...]:
@@ -522,13 +527,17 @@ class FlowTaskStore:
 
 
 class Registry:
-    """Handle -> DID resolution, plus each member's registered roles."""
+    """Handle -> DID resolution, each member's registered roles, and the human users."""
 
     def __init__(
-        self, mapping: Mapping[str, str], roles: Mapping[str, tuple[str, ...]] | None = None
+        self,
+        mapping: Mapping[str, str],
+        roles: Mapping[str, tuple[str, ...]] | None = None,
+        users: frozenset[str] = frozenset(),
     ) -> None:
         self._mapping = dict(mapping)
         self.roles: dict[str, tuple[str, ...]] = dict(roles or {})
+        self.users = users
 
     async def resolve_owner(self, handle: str) -> str | None:
         return self._mapping.get(handle.lstrip("@"))
@@ -538,6 +547,12 @@ class Registry:
 
     async def roles_of(self, did: str) -> frozenset[str]:
         return frozenset(self.roles.get(did, ()))
+
+    async def is_user(self, did: str) -> bool:
+        return did in self.users
+
+    async def user_roles(self) -> frozenset[str]:
+        return frozenset(r for did in self.users for r in self.roles.get(did, ()))
 
 
 class RecordingSink:

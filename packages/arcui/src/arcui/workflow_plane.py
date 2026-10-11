@@ -30,8 +30,10 @@ from uuid import uuid4
 from arcstore.runs import NodeState
 from arcteam.workflow import explain_node_error, run_failure_reason
 from arcteam.workflow.errors import GateNotAuthorizedError, WorkflowError
+from arcteam.workflow.gate_outcome import DECISIONS
 from arcteam.workflow.migrate import check_bundle, migrate_bundle, operator_signer_did
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
+from arcteam.workflow.runner_contracts import HUMAN_STEP_KINDS, TriggerContext
 from arctrust import sanitize_error_text
 
 from arcui.routes.workflows import ControlPlaneResult, OperatorActor, WorkflowFieldError
@@ -96,6 +98,25 @@ def _node_io(task: Any) -> dict[str, Any]:
     detail["input"] = _bounded({"args": meta.get("args"), "upstream": meta.get("upstream") or {}})
     detail["output"] = _bounded(task.output) if task.output is not None else None
     return detail
+
+
+def _human_step_view(task: Any) -> dict[str, Any]:
+    """What a person needs to decide a waiting gate or human_input step.
+
+    The schema object the runner read from the verified bundle (the gate panel
+    renders a form from it) and a human_input step's prompt. Only while the row
+    waits: a decided step has nothing left to render. Both come from the signed
+    definition, not from run data, so they are shown at every classification.
+    """
+    meta = task.metadata
+    if task.status != "review" or str(meta.get("node_kind", "")) not in HUMAN_STEP_KINDS:
+        return {}
+    view: dict[str, Any] = {}
+    if isinstance(meta.get("output_schema_resolved"), dict):
+        view["output_schema_resolved"] = meta["output_schema_resolved"]
+    if isinstance(meta.get("prompt"), str):
+        view["prompt"] = meta["prompt"]
+    return view
 
 
 #: The durable node-snapshot vocabulary as the dashboard's per-node vocabulary.
@@ -223,6 +244,9 @@ class DashboardWorkflowPlane:
             for node in definition.nodes
         ]
         detail["edges"] = _edges(definition)
+        detail["events"] = [
+            {"name": event.name, "schema": event.schema_ref} for event in definition.events
+        ]
         detail["channel"] = definition.channel
         detail["versions"] = [
             {
@@ -277,6 +301,7 @@ class DashboardWorkflowPlane:
                 "started_at": task.started_at,
                 "completed_at": task.completed_at,
                 **_node_io(task),
+                **_human_step_view(task),
             }
             if node_id in snapshot:
                 nodes[node_id].update(_snapshot_fields(snapshot[node_id]))
@@ -343,9 +368,13 @@ class DashboardWorkflowPlane:
         return _text_or_none(pinned.owner)
 
     async def gate_owner_did(self, task_id: str) -> str | None:
-        """The owner agent DID the runner wrote on a gate row; None otherwise."""
+        """The owner agent DID the runner wrote on a gate or human_input row; else None.
+
+        Both kinds are decided through the gate route (D-845), so both bind
+        ``gates:resolve`` to their owner agent.
+        """
         task = await self._tasks.get(task_id)
-        if task is None or str(task.metadata.get("node_kind", "")) != "gate":
+        if task is None or str(task.metadata.get("node_kind", "")) not in DECISIONS:
             return None
         return _text_or_none(task.owner_did)
 
@@ -532,11 +561,37 @@ class DashboardWorkflowPlane:
         self, workflow_id: str, run_input: dict[str, Any], *, actor: OperatorActor
     ) -> ControlPlaneResult:
         result = await self._plane.run(
-            workflow_id, input=run_input, initiator="operator", actor_did=actor.did
+            workflow_id,
+            input=run_input,
+            initiator="operator",
+            actor_did=actor.did,
+            trigger=TriggerContext("manual"),
         )
         if not result.ok or result.run is None:
             return _errors(result)
         return ControlPlaneResult(value=_run_summary(result.run))
+
+    async def fire_event(
+        self,
+        workflow_id: str,
+        name: str,
+        payload: dict[str, Any],
+        *,
+        idempotency_key: str,
+        actor: OperatorActor,
+    ) -> ControlPlaneResult:
+        """Relay a declared event. The run id is keyed to the principal (REQ-606)."""
+        result = await self._plane.fire_event(
+            workflow_id,
+            name,
+            payload,
+            idempotency_key=idempotency_key,
+            actor_did=actor.principal_did,
+            on_behalf_of=actor.on_behalf_of,
+        )
+        if not result.ok or result.run is None:
+            return _errors(result)
+        return ControlPlaneResult(value=_run_summary(result.run), replayed=result.replayed)
 
     async def test_run_workflow(
         self, workflow_id: str, *, actor: OperatorActor
@@ -600,19 +655,24 @@ class DashboardWorkflowPlane:
         decision: str,
         notes: str,
         actor: OperatorActor,
+        payload: dict[str, Any] | None = None,
     ) -> ControlPlaneResult:
         """Relay the reviewer's choice. The plane decides what it means (REQ-246).
 
-        The decider is the acting identity: its DID and its own roles (an app
-        adds none), so the control plane's approver list decides who may
-        resolve. A refusal there is ``forbidden``.
+        The decider is the acting identity: its DID (the person an app acts
+        for, else the caller) and its own roles (an app adds none), so the
+        control plane's approver list decides who may resolve. A refusal there
+        is ``forbidden``; a payload failing the step's schema is
+        ``unprocessable``.
         """
         try:
             result = await self._plane.resolve_gate(
                 task_id,
                 decision=decision,
                 notes=notes,
-                actor_did=actor.did,
+                payload=payload,
+                decider_did=actor.did,
+                on_behalf_of=actor.on_behalf_of,
                 actor_roles=actor.roles,
             )
         except GateNotAuthorizedError:
@@ -719,7 +779,13 @@ def _placeholder_refusal(owner: str) -> ControlPlaneResult | None:
 
 
 def _errors(result: Any) -> ControlPlaneResult:
-    """arcteam's typed issues, verbatim — the route layer reinterprets nothing."""
+    """arcteam's typed issues, verbatim — the route layer reinterprets nothing.
+
+    Each issue's refusal class (``code``) picks the flag the route maps to a
+    status: ``not_found`` 404, ``conflict`` 409, ``invalid_payload`` 422;
+    anything unclassified stays a repairable 400.
+    """
+    codes = {str(getattr(issue, "code", "") or "") for issue in result.errors}
     issues = [
         WorkflowFieldError(
             node_id=str(getattr(issue, "node_id", "") or ""),
@@ -730,8 +796,13 @@ def _errors(result: Any) -> ControlPlaneResult:
         )
         for issue in result.errors
     ]
-    conflict = any(issue.field == "version" for issue in issues)
-    return ControlPlaneResult(errors=issues, conflict=conflict)
+    conflict = "conflict" in codes or any(issue.field == "version" for issue in issues)
+    return ControlPlaneResult(
+        errors=issues,
+        conflict=conflict,
+        not_found="not_found" in codes,
+        unprocessable="invalid_payload" in codes,
+    )
 
 
 def _run_summary(run: Any) -> dict[str, Any]:

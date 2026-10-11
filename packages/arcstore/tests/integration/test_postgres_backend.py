@@ -610,3 +610,38 @@ async def test_postgres_v14_deletes_legacy_per_agent_connection_rows(
             "DELETE FROM mutable_records WHERE key = ANY($1::text[])", [current, other]
         )
     assert {row["key"] for row in rows} == {current, other}
+
+
+async def test_postgres_fresh_schema_applies_v1_through_v15(
+    postgres_backend: ArcStoreBackend,
+) -> None:
+    """Every migration, v1..v15, applies on an empty schema and creates the event tables."""
+    from arcstore.migrations import SCHEMA_HEAD, migrate
+
+    assert isinstance(postgres_backend, PostgresBackend)
+    schema = f"fresh_{uuid4().hex}"
+    async with postgres_backend._require_pool().acquire() as connection:
+        await connection.execute(f'CREATE SCHEMA "{schema}"')
+        try:
+            await connection.execute(f'SET search_path TO "{schema}"')
+            async with connection.transaction():
+                await migrate(connection)
+            versions = [
+                row["version"]
+                for row in await connection.fetch(
+                    "SELECT version FROM arcstore_schema ORDER BY version"
+                )
+            ]
+            tables = {
+                row["table_name"]
+                for row in await connection.fetch(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = $1",
+                    schema,
+                )
+            }
+        finally:
+            await connection.execute("RESET search_path")
+            await connection.execute(f'DROP SCHEMA "{schema}" CASCADE')
+    assert versions == list(range(1, SCHEMA_HEAD + 1))
+    assert SCHEMA_HEAD >= 15
+    assert {"work_events", "work_event_deliveries"} <= tables

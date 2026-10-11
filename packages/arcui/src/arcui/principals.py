@@ -12,6 +12,14 @@ error code, so the wire never says why beyond the code.
 
 Pipeline (each step is one small function below):
 
+0. pre-authentication gates, before any authority load or audit write (an
+   unauthenticated stranger can reach this far, so neither writes a row):
+   a per-client-address throttle, else 429 ``rate_limited`` (logged once per
+   window per address); then the body, read once through
+   :func:`~arcui.request_body.read_capped_body`, else 413 ``body_too_large``.
+   The address is the socket peer (``request.client.host``); arcui has no
+   trusted-proxy setting, so ``X-Forwarded-For`` is never read. Behind a
+   reverse proxy every app shares the proxy's budget;
 1. authority factory present, else 503 ``account_authority_unavailable``;
 2. credential verified (bearer, or signed when the tier requires it), else 401
    ``invalid_principal``; an authority failure while loading is 503;
@@ -32,6 +40,7 @@ import asyncio
 import logging
 import re
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -63,6 +72,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from arcui.audit import emit_mutation_audit
+from arcui.request_body import read_capped_body
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +88,15 @@ flip is a deliberate one-line change.
 BEARER_PREFIX = "arcp_"
 _MAX_PERSON_REF_CHARS = 320  # longest valid email address
 _WINDOW_SECONDS = 60.0
+_MAX_LIMITER_KEYS = 10_000
+
+APP_BODY_CAP_BYTES = 128 * 1024
+"""The largest body any :data:`APP_ROUTES` handler accepts, read before authentication.
+
+The gate route's own cap (two 64 KiB payload caps) is the largest; runs intake,
+the event route and task create cap at 64 KiB, and inbox send is bounded by the
+64 KB bus. Each route still applies its own, tighter cap after this one.
+"""
 
 INVALID_PRINCIPAL = "invalid_principal"
 AUTHORITY_UNAVAILABLE = "account_authority_unavailable"
@@ -85,6 +104,7 @@ ROUTE_NOT_ALLOWED = "route_not_allowed"
 SCOPE_DENIED = "scope_denied"
 ON_BEHALF_OF_DENIED = "on_behalf_of_denied"
 RATE_LIMITED = "rate_limited"
+BODY_TOO_LARGE = "body_too_large"
 ON_BEHALF_OF_IGNORED = "principal.on_behalf_of.ignored"
 
 
@@ -106,6 +126,9 @@ class PrincipalsConfig(BaseModel):
     require_signed_requests: bool = False
     require_named_decider: bool | None = None
     rate_per_minute: int = Field(default=600, gt=0)
+    # Per client address, before authentication: room for one app at its full
+    # per-principal rate plus headroom, still a hard ceiling on a flood.
+    pre_auth_rate_per_minute: int = Field(default=1200, gt=0)
 
     @property
     def signed_required(self) -> bool:
@@ -208,6 +231,19 @@ APP_ROUTES: tuple[AppRoute, ...] = (
         Scope.INBOX_SEND,
         agent_from_path=_agent_label,
     ),
+    # SPEC-088 work intake and events. No agent is named in these paths, so the
+    # middleware does no scope check; each handler resolves its agent (request
+    # body, intake row, run trace, bundle owner, ``agent`` query) and calls
+    # ``require_scope`` itself. ``GET /api/runs`` (list) and every
+    # ``/api/work-events/callbacks`` route have no row: apps are refused there.
+    AppRoute("POST", re.compile(r"/api/runs"), None),
+    AppRoute("GET", re.compile(r"/api/runs/[^/]+"), None),
+    AppRoute("GET", re.compile(r"/api/runs/[^/]+/audit"), Scope.RUNS_READ),
+    AppRoute("GET", re.compile(r"/api/runs/[^/]+/recalls"), Scope.RUNS_READ),
+    AppRoute("POST", re.compile(r"/api/workflows/[^/]+/events/[^/]+"), None),
+    AppRoute("GET", re.compile(r"/api/work-events/stream"), None),
+    AppRoute("GET", re.compile(r"/api/work-events"), None),
+    AppRoute("GET", re.compile(r"/api/work-events/keys"), None),
 )
 
 HARD_DENIED_PREFIXES: tuple[str, ...] = (
@@ -258,7 +294,10 @@ def require_scope(
     to ``agent_did`` (fail closed when no agent is named).
     """
     principal = getattr(request.state, "principal", None)
-    if scope_allowed(principal, scope, agent_did, _config(request).wildcards_allowed):
+    # Wildcard grants exist only for apps; a session's decision never reads the config.
+    is_app_call = principal is not None and principal.kind == "app"
+    wildcards = is_app_call and _config(request).wildcards_allowed
+    if scope_allowed(principal, scope, agent_did, wildcards):
         return None
     emit_mutation_audit(
         request,
@@ -303,31 +342,59 @@ def _app_holds(
 
 
 class PrincipalRateLimiter:
-    """Fixed one-minute window per principal DID.
+    """Fixed one-minute window per key (a principal DID, or a client address).
 
-    The window opens on a principal's first call and resets a full minute
-    later; refused calls do not extend it. Keys are verified principal DIDs
-    only (the limiter runs after authentication), so the map is bounded by the
-    number of live principals. Used from the event loop only; no locking.
+    The window opens on a key's first call and resets a full minute later;
+    refused calls do not extend it. Keys may be untrusted (client addresses
+    before authentication), so the map holds at most ``max_keys`` windows:
+    windows are kept in start order, expired ones are dropped first, and only
+    when every tracked window is live does the oldest go. Used from the event
+    loop only; no locking.
     """
 
-    def __init__(self, rate_per_minute: int, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        rate_per_minute: int,
+        clock: Callable[[], float] = time.monotonic,
+        *,
+        max_keys: int = _MAX_LIMITER_KEYS,
+    ) -> None:
         if rate_per_minute <= 0:
             raise ValueError("rate_per_minute must be positive")
+        if max_keys <= 0:
+            raise ValueError("max_keys must be positive")
         self._rate = rate_per_minute
         self._clock = clock
-        self._windows: dict[str, tuple[float, int]] = {}
+        self._max_keys = max_keys
+        # key -> (window start, calls this window, refused ones included)
+        self._windows: OrderedDict[str, tuple[float, int]] = OrderedDict()
 
-    def allow(self, principal_did: str) -> bool:
-        """Spend one call from ``principal_did``'s budget; False when it is spent."""
+    def allow(self, key: str) -> bool:
+        """Spend one call from ``key``'s budget; False when it is spent."""
+        return self.excess(key) == 0
+
+    def excess(self, key: str) -> int:
+        """Spend one call; 0 within budget, else its place past the budget (1 = first refused)."""
         now = self._clock()
-        started, used = self._windows.get(principal_did, (now, 0))
-        if now - started >= _WINDOW_SECONDS:
-            started, used = now, 0
-        if used >= self._rate:
-            return False
-        self._windows[principal_did] = (started, used + 1)
-        return True
+        window = self._windows.get(key)
+        if window is None or now - window[0] >= _WINDOW_SECONDS:
+            self._make_room(now)
+            self._windows.pop(key, None)
+            window = (now, 0)
+        started, calls = window
+        self._windows[key] = (started, calls + 1)
+        return max(0, calls + 1 - self._rate)
+
+    def tracked_keys(self) -> int:
+        """How many windows the limiter holds (bounded by ``max_keys``)."""
+        return len(self._windows)
+
+    def _make_room(self, now: float) -> None:
+        while self._windows:
+            started, _ = next(iter(self._windows.values()))
+            if now - started < _WINDOW_SECONDS and len(self._windows) < self._max_keys:
+                return
+            self._windows.popitem(last=False)
 
 
 def new_replay_cache() -> ReplayCache:
@@ -348,6 +415,9 @@ def is_principal_request(request: Request, bearer: str) -> bool:
 async def authenticate_principal(request: Request, bearer: str) -> RequestPrincipal | JSONResponse:
     """Run the whole principal pipeline; the principal, or the refusal to send."""
     request.state.on_behalf_of = None
+    refused = _check_pre_auth_rate(request) or await _check_body_cap(request)
+    if refused is not None:
+        return refused
     factory = getattr(request.app.state, "principal_store_factory", None)
     if factory is None:
         return _authority_unavailable(request, "no principal authority configured")
@@ -386,6 +456,33 @@ def _bind_principal(request: Request, verified: AuthenticatedPrincipal) -> Reque
     request.state.role = "app"
     request.state.account_did = None
     return principal
+
+
+# --- step 0: pre-authentication gates (no audit row, no authority load) ---------
+
+
+def _client_address(request: Request) -> str:
+    # The socket peer only: no trusted-proxy setting exists, so forwarding
+    # headers are attacker-controlled and never read.
+    return request.client.host if request.client is not None else "unknown"
+
+
+def _check_pre_auth_rate(request: Request) -> JSONResponse | None:
+    limiter: PrincipalRateLimiter = request.app.state.principal_pre_auth_limiter
+    address = _client_address(request)
+    excess = limiter.excess(address)
+    if excess == 0:
+        return None
+    if excess == 1:  # one line per window per address, so a flood cannot flood the log
+        logger.warning("principal.pre_auth_rate_limited client=%s", address)
+    return JSONResponse({"error": RATE_LIMITED}, status_code=429)
+
+
+async def _check_body_cap(request: Request) -> JSONResponse | None:
+    # The capped read caches the body, so verification and the route reuse it.
+    if await read_capped_body(request, APP_BODY_CAP_BYTES) is None:
+        return JSONResponse({"error": BODY_TOO_LARGE}, status_code=413)
+    return None
 
 
 # --- step 2: credential -------------------------------------------------------
@@ -439,7 +536,7 @@ async def _verify_bearer(
 async def _verify_signed(
     request: Request, factory: Callable[[], PrincipalStore]
 ) -> tuple[PrincipalStore, AuthenticatedPrincipal]:
-    # Starlette caches the body, so the route still reads it after this.
+    # Step 0 read and cached the capped body; this returns those bytes.
     body = await request.body()
     envelope = SignedRequest.from_headers(
         request.headers, request.method, request.url.path, request.url.query, body
@@ -617,6 +714,7 @@ def record_ignored_on_behalf_of(request: Request) -> None:
 
 
 __all__ = [
+    "APP_BODY_CAP_BYTES",
     "APP_ROUTES",
     "ENTERPRISE_REQUIRE_NAMED_DECIDER_DEFAULT",
     "HARD_DENIED_PREFIXES",
@@ -626,6 +724,7 @@ __all__ = [
     "PrincipalsConfig",
     "RequestPrincipal",
     "Scope",
+    "Tier",
     "authenticate_principal",
     "is_hard_denied",
     "is_principal_request",

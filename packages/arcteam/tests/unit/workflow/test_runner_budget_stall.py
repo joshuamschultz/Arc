@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from arcteam.workflow.runner_budget import RunBudget
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     OPS_DID,
@@ -78,7 +79,11 @@ async def test_run_terminates_when_the_token_budget_is_exhausted(
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(
@@ -97,7 +102,11 @@ async def test_spend_is_settled_once_per_node_not_once_per_tick(
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True}, tokens=20)
@@ -120,7 +129,11 @@ async def test_run_terminates_when_the_wall_clock_budget_is_exhausted(
     _, runs, _ = stores
     runner = build(stores, registry, definition, clock=lambda: moment)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     runner._clock = lambda: moment + timedelta(seconds=30)
@@ -134,7 +147,11 @@ async def test_a_failed_node_rolls_the_run_into_failed(stores: Any, registry: An
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await fail_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, "tool exploded")
@@ -148,7 +165,11 @@ async def test_all_nodes_done_rolls_the_run_into_done(stores: Any, registry: Any
     _, runs, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await complete_node(tasks, task_id(run.run_id, "first", 0), SALES_DID, {"ok": True})
@@ -171,7 +192,11 @@ async def test_a_stalled_run_is_escalated_rather_than_sitting_silent(
     flow_tasks, _, tasks = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def swallow(tasks_: Any, *, actor_did: str, fence: Any = None) -> list[Any]:
@@ -223,10 +248,20 @@ async def test_one_poisoned_run_does_not_stop_the_tick_for_the_others(
     runner = build(stores, registry, alpha, definitions=definitions)
 
     await runner.start_run(
-        "alpha", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-alpha"
+        "alpha",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-alpha",
+        trigger=TriggerContext("manual"),
     )
     await runner.start_run(
-        "beta", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-beta"
+        "beta",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-beta",
+        trigger=TriggerContext("manual"),
     )
 
     # Alpha's definition becomes unreadable between ticks.
@@ -253,7 +288,11 @@ async def test_an_unreadable_start_time_stops_the_run_rather_than_unbounding_it(
     _, runs, _ = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await backend.mutable_merge(
@@ -272,7 +311,11 @@ async def test_a_missing_start_time_stops_the_run_too(
     _, runs, _ = stores
     runner = build(stores, registry, CHAIN)
     run = await runner.start_run(
-        "budgeted", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "budgeted",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     await backend.mutable_merge("runs", run.run_id, {"started_at": None}, actor_did="did:arc:x/1")

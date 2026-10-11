@@ -6,6 +6,8 @@ import asyncio
 import hashlib
 from typing import Any
 
+from arcteam.workflow.runner_contracts import TriggerContext
+
 from .conftest import Definition, Node, RecordingSink
 from .test_runner_frontier import build
 
@@ -22,6 +24,7 @@ _FIRE: dict[str, Any] = {
     "initiator_did": "did:arc:local:agent/1111aaaa",
     "run_id": _RUN_ID,
     "trigger_digest": "digest-of-the-signed-occurrence",
+    "trigger": TriggerContext("cron"),
 }
 
 

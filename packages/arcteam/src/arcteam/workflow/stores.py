@@ -58,6 +58,15 @@ class RunStateMissingError(RuntimeError):
     """The runner's companion state row for a run is gone."""
 
 
+class RunIdentityConflictError(ValueError):
+    """A pinned run id already names a run created from a different request.
+
+    The idempotency refusal (D-842): an identical repeat returns the existing
+    run; anything else under the same id (another payload, signer or version)
+    is this error, never a silent overwrite.
+    """
+
+
 _STATE_COLLECTION = "workflow_run_state"
 _TASK_COLLECTION = "tasks"
 _CAS_RETRIES = 32
@@ -150,18 +159,19 @@ class WorkflowRunStore:
                 allow_nan=False,
             ).encode()
         ).hexdigest()
-        await self._runs.create(
-            Run(
-                id=run_id,
-                workflow_id=workflow_id,
-                workflow_version=version,
-                content_hash=content_hash,
-                request_digest=request_digest,
-                status="running",
-                initiator_did=initiator_did,
-            ),
-            fence=fence,
+        run = Run(
+            id=run_id,
+            workflow_id=workflow_id,
+            workflow_version=version,
+            content_hash=content_hash,
+            request_digest=request_digest,
+            status="running",
+            initiator_did=initiator_did,
         )
+        try:
+            await self._runs.create(run, fence=fence)
+        except ValueError as exc:
+            raise RunIdentityConflictError(str(exc)) from exc
         creation_token = uuid4().hex
         state: dict[str, Any] = {
             "run_id": run_id,
@@ -188,7 +198,9 @@ class WorkflowRunStore:
             fence=fence,
         )
         if rows[0].get("request_digest") != request_digest:
-            raise ValueError("workflow companion identity already exists with a different request")
+            raise RunIdentityConflictError(
+                "workflow companion identity already exists with a different request"
+            )
         loaded = await self.get(run_id)
         if loaded is None:  # pragma: no cover — the row was just written
             raise RuntimeError(f"run {run_id} vanished immediately after creation")
@@ -619,9 +631,39 @@ class RegistryOwnerResolver:
             return frozenset()
         return frozenset(entity.roles)
 
+    async def is_user(self, did: str) -> bool:
+        """True only for an ACTIVE ``user`` entity registered under exactly ``did``.
+
+        An escalation target must be a person: an agent, a stranger, a handle
+        or a suspended member is refused, so no model can approve its own run.
+        """
+        if not did.startswith("did:"):
+            return False
+        entity = await self._registry.get(did)
+        if entity is None or str(entity.did) != did or not _is_active(entity):
+            return False
+        return _is_user(entity)
+
+    async def user_roles(self) -> frozenset[str]:
+        """Every role an ACTIVE human user holds — what an escalation may name.
+
+        A role only an agent holds is excluded: escalating to it would hand a
+        human decision to a model (REQ-622, ASI09).
+        """
+        return frozenset(
+            role
+            for entity in await self._registry.list_entities()
+            if _is_active(entity) and _is_user(entity)
+            for role in entity.roles
+        )
+
 
 def _is_active(entity: Any) -> bool:
     return str(getattr(entity.status, "value", entity.status)) == "active"
+
+
+def _is_user(entity: Any) -> bool:
+    return str(getattr(entity.type, "value", entity.type)) == "user"
 
 
 async def build_team_bindings(
@@ -793,6 +835,7 @@ def _same_path_entry(left: PathEntry, right: PathEntry) -> bool:
 __all__ = [
     "FlowRun",
     "RegistryOwnerResolver",
+    "RunIdentityConflictError",
     "RunStateMissingError",
     "WorkflowRunStore",
     "WorkflowTaskStore",

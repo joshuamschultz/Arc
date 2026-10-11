@@ -11,7 +11,7 @@ from typing import Any
 
 from arctrust.audit import AuditEvent, emit
 
-from arcstore.backends.base import STORE_TABLES
+from arcstore.backends.base import STORE_TABLES, WORK_EVENT_FILTER_FIELDS
 from arcstore.config import ArcStoreConfig, PostgresSettings
 from arcstore.migrations import migrate
 from arcstore.mutation_fence import (
@@ -24,6 +24,13 @@ from arcstore.source_sync import SourceSyncBackend
 
 _logger = logging.getLogger("arcstore.backends.postgres")
 _ORDER_BY = frozenset({"ts", "ts ASC", "ts DESC"})
+# Transaction-scoped advisory lock serializing work-event appends. A bigserial
+# value is drawn before commit, so two concurrent appends could commit out of
+# seq order and a reader resuming from ``after_seq`` would skip the later
+# commit. Serializing makes commit order equal seq order. Appends are single
+# small rows (run/gate milestones), so the one-writer ceiling is far above load.
+_WORK_EVENT_APPEND_LOCK = 0x0A5C_0088_0001
+_DELIVERY_STATES = frozenset({"pending", "delivered", "withheld", "dead"})
 
 
 class _SharedPool:
@@ -1166,6 +1173,124 @@ class PostgresBackend(SourceSyncBackend):
                 consumer_id,
             )
         return str(result).endswith("1")
+
+    async def append_work_event(
+        self, event: dict[str, Any], *, callback_url: str | None, now: datetime
+    ) -> bool:
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                await connection.execute(
+                    "SELECT pg_advisory_xact_lock($1)", _WORK_EVENT_APPEND_LOCK
+                )
+                seq = await connection.fetchval(
+                    "INSERT INTO work_events(event_id, kind, occurred_at, agent_did, "
+                    "workflow_id, run_id, node_id, task_id, correlation_id, status, "
+                    "classification, envelope) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, "
+                    "$10, $11, $12::jsonb) ON CONFLICT(event_id) DO NOTHING RETURNING seq",
+                    event["event_id"],
+                    event["kind"],
+                    _timestamp(event["occurred_at"]),
+                    event["agent_did"],
+                    event.get("workflow_id"),
+                    event.get("run_id"),
+                    event.get("node_id"),
+                    event.get("task_id"),
+                    event.get("correlation_id"),
+                    event["status"],
+                    event["classification"],
+                    _json(event),
+                )
+                if seq is None:
+                    return False
+                if callback_url is not None:
+                    await connection.execute(
+                        "INSERT INTO work_event_deliveries(event_id, callback_url, "
+                        "next_attempt_at) VALUES ($1, $2, $3)",
+                        event["event_id"],
+                        callback_url,
+                        now,
+                    )
+        return True
+
+    async def read_work_events(
+        self,
+        after_seq: int,
+        *,
+        limit: int,
+        where: Mapping[str, str | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        params: list[Any] = [after_seq]
+        clauses = ["seq > $1"]
+        for field, value in (where or {}).items():
+            if field not in WORK_EVENT_FILTER_FIELDS:
+                raise ValueError(f"unsupported work-event filter: {field!r}")
+            params.append(value)
+            clauses.append(f"{field} IS NOT DISTINCT FROM ${len(params)}::text")
+        params.append(limit)
+        statement = (
+            "SELECT seq, envelope FROM work_events WHERE "  # noqa: S608 - allowlisted columns
+            + " AND ".join(clauses)
+            + f" ORDER BY seq LIMIT ${len(params)}"
+        )
+        async with self._require_pool().acquire() as connection:
+            rows = await connection.fetch(statement, *params)
+        return [{**_as_dict(row["envelope"]), "seq": row["seq"]} for row in rows]
+
+    async def get_work_event(self, event_id: str) -> dict[str, Any] | None:
+        async with self._require_pool().acquire() as connection:
+            row = await connection.fetchrow(
+                "SELECT seq, envelope FROM work_events WHERE event_id = $1", event_id
+            )
+        return None if row is None else {**_as_dict(row["envelope"]), "seq": row["seq"]}
+
+    async def claim_work_event_deliveries(
+        self, consumer_id: str, *, limit: int, now: datetime, lease_seconds: float
+    ) -> list[dict[str, Any]]:
+        statement = """
+            WITH due AS (
+                SELECT event_id FROM work_event_deliveries
+                WHERE state = 'pending' AND next_attempt_at <= $3
+                  AND (lease_expires_at IS NULL OR lease_expires_at <= $3)
+                ORDER BY next_attempt_at, event_id FOR UPDATE SKIP LOCKED LIMIT $1
+            )
+            UPDATE work_event_deliveries AS d SET lease_owner = $2,
+                lease_expires_at = $3 + $4::double precision * interval '1 second',
+                attempts = attempts + 1
+            FROM due WHERE d.event_id = due.event_id
+            RETURNING d.event_id, d.callback_url, d.attempts
+        """
+        async with self._require_pool().acquire() as connection:
+            async with connection.transaction():
+                rows = await connection.fetch(statement, limit, consumer_id, now, lease_seconds)
+        return [dict(row) for row in rows]
+
+    async def settle_work_event_delivery(
+        self,
+        event_id: str,
+        *,
+        state: str,
+        next_attempt_at: datetime | None,
+        error: str | None,
+        consumer_id: str | None,
+        now: datetime,
+    ) -> bool:
+        if state not in _DELIVERY_STATES:
+            raise ValueError(f"unknown delivery state: {state!r}")
+        async with self._require_pool().acquire() as connection:
+            result = await connection.execute(
+                "UPDATE work_event_deliveries SET state = $2, "
+                "next_attempt_at = COALESCE($3, next_attempt_at), last_error = $4, "
+                "lease_owner = NULL, lease_expires_at = NULL "
+                "WHERE event_id = $1 AND state = 'pending' AND lease_owner IS NOT NULL "
+                "AND ($5::text IS NULL OR (lease_owner = $5 AND lease_expires_at > $6))",
+                event_id,
+                state,
+                next_attempt_at,
+                error,
+                consumer_id,
+                now,
+            )
+        return str(result).endswith(" 1")
 
     async def _update_if(
         self,

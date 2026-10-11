@@ -32,6 +32,7 @@ from arcstore.standing_grants import (
     StandingGrantStore,
     approve_always,
 )
+from arctrust.callback_allowlist import CALLBACK_ALLOWLIST_TOOL
 from arctrust.policy import OperatorApprovalAuthority, grant_to_wire, sign_approval_for_hash
 from arctrust.principals import PRINCIPAL_ISSUE_TOOL
 
@@ -176,13 +177,15 @@ async def _always(
 
 
 async def _deny(store: ApprovalStore, row: PendingApproval) -> None:
-    """Deny ``row``; a denied principal issue also revokes the record it names."""
+    """Deny ``row``; a denied principal issue or callback add also retires its record."""
     resolved = await store.resolve(
         row.id, status="denied", actor_did="operator", resolved_by="operator"
     )
     _write(f"Denied {row.id}." if resolved else f"Could not deny {row.id}.")
     if resolved is not None and row.tool == PRINCIPAL_ISSUE_TOOL:
         await _revoke_principal(row)
+    if resolved is not None and row.tool == CALLBACK_ALLOWLIST_TOOL:
+        await _remove_callback(row)
 
 
 async def _approve_once(
@@ -238,6 +241,11 @@ def _resolve(args: argparse.Namespace) -> None:
                 await _approve_principal(store, row, always=always)
                 return
 
+            # SPEC-088: a callback add row activates one callback allowlist entry.
+            if row.tool == CALLBACK_ALLOWLIST_TOOL:
+                await _approve_callback(store, row, always=always)
+                return
+
             from arccli.commands.operator import resolve_operator_signer
 
             operator = OperatorApprovalAuthority(resolve_operator_signer())
@@ -270,7 +278,7 @@ def _principal_id(row: PendingApproval) -> str:
     return principal_id
 
 
-def _refuse_federal_principal(row: PendingApproval) -> None:
+def _refuse_federal(row: PendingApproval, *, action: str, target_key: str, what: str) -> None:
     """REQ-554 at the CLI: the deployment key is not a person, so the two-person
     rule cannot be checked here. Audit the refusal and send the operator to the
     dashboard, where the approver is a signed-in person."""
@@ -283,15 +291,15 @@ def _refuse_federal_principal(row: PendingApproval) -> None:
         sink.write(
             AuditEvent(
                 actor_did=actor,
-                action="principal.activate",
-                target=row.arguments.get("principal_id", row.id),
+                action=action,
+                target=row.arguments.get(target_key, row.id),
                 outcome="deny",
                 tier="federal",
                 extra={"reason": "two_person_rule_cli", "approval_id": row.id},
             )
         )
     _err(
-        f"arc approve: {row.id!r} is a federal app principal request; it needs a second "
+        f"arc approve: {row.id!r} is a federal {what} request; it needs a second "
         "person. Approve it in the dashboard (Approvals), signed in as an operator other "
         "than the requester."
     )
@@ -312,7 +320,9 @@ async def _approve_principal(store: ApprovalStore, row: PendingApproval, *, alwa
         _err("arc approve: --always does not apply to an app principal request")
         sys.exit(1)
     if deployment_tier() == "federal":
-        _refuse_federal_principal(row)
+        _refuse_federal(
+            row, action="principal.activate", target_key="principal_id", what="app principal"
+        )
     principal_id = _principal_id(row)
     operator = OperatorApprovalAuthority(resolve_operator_signer())
     principal = await asyncio.to_thread(
@@ -341,6 +351,63 @@ async def _revoke_principal(row: PendingApproval) -> None:
     actor_did = operator_signer_and_did()[0]
     await asyncio.to_thread(revoke_requested, principal_id, actor_did)
     _write(f"Revoked app principal {principal_id}.")
+
+
+def _entry_id(row: PendingApproval) -> str:
+    entry_id = row.arguments.get("entry_id", "")
+    if not entry_id:
+        _err(f"arc approve: {row.id!r} names no callback entry")
+        sys.exit(1)
+    return entry_id
+
+
+async def _approve_callback(store: ApprovalStore, row: PendingApproval, *, always: bool) -> None:
+    """Activate the entry a ``work_event_callback`` row names (SPEC-088 COMP-018).
+
+    The entry is activated first: the store re-reads it and refuses (audited)
+    unless it is still pending and hashes to the row's ``call_hash``. If the row
+    then races out of pending (a concurrent deny), the entry is removed again.
+    """
+    from arccli.commands._accounts import deployment_tier
+    from arccli.commands.callback import activate_requested, remove_requested
+    from arccli.commands.operator import resolve_operator_signer
+
+    if always:
+        _err("arc approve: --always does not apply to a callback origin request")
+        sys.exit(1)
+    if deployment_tier() == "federal":
+        _refuse_federal(
+            row,
+            action="work_event.callback_allowlist.activate",
+            target_key="entry_id",
+            what="callback origin",
+        )
+    entry_id = _entry_id(row)
+    operator = OperatorApprovalAuthority(resolve_operator_signer())
+    entry = await asyncio.to_thread(activate_requested, entry_id, row.call_hash, operator.did)
+    resolved = await store.resolve(
+        row.id,
+        status="approved",
+        actor_did=operator.did,
+        resolved_by=operator.did,
+        grant=grant_to_wire(sign_approval_for_hash(row.call_hash, operator)),
+    )
+    if resolved is None:
+        await asyncio.to_thread(remove_requested, entry_id, operator.did)
+        _err(f"arc approve: {row.id!r} raced out of pending; callback entry {entry_id} removed")
+        sys.exit(1)
+    _write(f"Approved {row.id} — callback origin {entry.origin} ({entry.id}) is active.")
+
+
+async def _remove_callback(row: PendingApproval) -> None:
+    """A denied ``work_event_callback`` row removes the pending entry it names."""
+    from arccli.commands.callback import remove_requested
+    from arccli.commands.operator import operator_signer_and_did
+
+    entry_id = _entry_id(row)
+    actor_did = operator_signer_and_did()[0]
+    await asyncio.to_thread(remove_requested, entry_id, actor_did)
+    _write(f"Removed callback entry {entry_id}.")
 
 
 async def _approve_enrollment(

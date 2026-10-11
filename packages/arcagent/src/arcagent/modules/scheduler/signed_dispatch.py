@@ -84,6 +84,7 @@ async def dispatch_signed_schedule(
             start_workflow_run(
                 entry.workflow_id,
                 entry.workflow_input,
+                trigger_kind=entry.type,
                 run_id=occurrence.run_id,
                 trigger_digest=hashlib.sha256(
                     json.dumps(

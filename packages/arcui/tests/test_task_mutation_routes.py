@@ -724,6 +724,65 @@ class TestWorkflowGateTerminates:
         assert plane.calls == [(tid, "approve")]
 
 
+class TestWorkflowHumanInputTerminates:
+    """A human_input row also wears ``review``: it resolves through the gate plane
+    too, so a reject fails the run instead of looping back to ``todo``. It has no
+    ``approve`` (it needs ``submit`` with a payload on the gate route)."""
+
+    TID = "wf/run-5e1f00d4a2b3/ask_due/0"
+
+    def _app(self, tmp_path: Path) -> tuple[Starlette, AuthConfig, _StubGatePlane]:
+        asyncio.run(
+            _seed(
+                tmp_path,
+                [
+                    _task(
+                        self.TID,
+                        owner_did="did:arc:x/a",
+                        status="review",
+                        metadata={"node_kind": "human_input"},
+                    )
+                ],
+            )
+        )
+        app, auth = _make_app(tmp_path)
+        plane = _StubGatePlane()
+        app.state.gate_control_plane = plane
+        return app, auth, plane
+
+    def test_rejecting_a_human_input_task_fails_the_run_and_never_re_dispatches(
+        self, tmp_path: Path
+    ) -> None:
+        app, auth, plane = self._app(tmp_path)
+        client = TestClient(app)
+
+        resp = client.post(f"/api/tasks/{self.TID}/reject", headers=_operator(auth))
+
+        assert resp.status_code == 200, resp.text
+        assert plane.calls == [(self.TID, "fail_run")]
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get(self.TID)).status != "todo"
+
+    def test_approving_a_human_input_task_is_refused_and_points_at_the_gate_route(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        app, auth, plane = self._app(tmp_path)
+        app.state.audit = UIAuditLogger()
+        client = TestClient(app)
+
+        with caplog.at_level("INFO", logger="arcui.audit"):
+            resp = client.post(f"/api/tasks/{self.TID}/approve", headers=_operator(auth))
+
+        assert 400 <= resp.status_code < 500, resp.text
+        assert resp.json()["error"] == "human_input_needs_submit"
+        assert f"/api/workflow-tasks/{self.TID}/gate" in resp.json()["use"]
+        assert plane.calls == []
+        store = asyncio.run(_seed_store(tmp_path))
+        assert asyncio.run(store.get(self.TID)).status == "review"
+        denied = [m for m in _mutations(caplog) if m["outcome"] == "denied"]
+        assert len(denied) == 1
+
+
 class TestHandoffReassign:
     def test_operator_reassigns_owner_via_patch(self, tmp_path: Path) -> None:
         """Handoff: PATCH owner_did moves an at-rest task to a new owner, who

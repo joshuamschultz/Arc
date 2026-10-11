@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 from arcstore.backends.memory import FakeBackend
 from arcteam.agent_fleet import ArcTeamFleet
+from arcteam.workflow.runner_contracts import TriggerContext
 from arctrust.paths import workflows_dir
 
 _ONE_NODE = """
@@ -348,6 +349,7 @@ def test_a_run_completes_end_to_end_with_no_dashboard(
                 input={},
                 initiator="operator",
                 initiator_did="did:arc:local:operator/test",
+                trigger=TriggerContext("manual"),
             )
             for node_id, did in (("collect", SALES_DID), ("verify", OPS_DID)):
                 row = f"wf/{run.run_id}/{node_id}/0"

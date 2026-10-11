@@ -53,6 +53,7 @@ import {
   useWriteWorkflowFile,
 } from '@/lib/queries'
 import { ScheduleStatus } from '@/components/workflows-view/schedule-status'
+import { WorkflowEventsTab } from '@/components/workflows-view/workflow-events'
 import { ApiError } from '@/lib/api'
 import { fmtTime, shortId } from '@/lib/format'
 import { runPath } from '@/lib/workflow-paths'
@@ -1031,6 +1032,7 @@ export function WorkflowDetailPage() {
                 <TabsTrigger value="trigger">Trigger &amp; Channel</TabsTrigger>
                 <TabsTrigger value="versions">Versions</TabsTrigger>
                 <TabsTrigger value="runs">Runs</TabsTrigger>
+                {(data.events?.length ?? 0) > 0 && <TabsTrigger value="events">Events</TabsTrigger>}
               </TabsList>
               <TabsContent value="graph" className="flex-1">
                 <GraphTab workflow={data} />
@@ -1044,6 +1046,11 @@ export function WorkflowDetailPage() {
               <TabsContent value="runs">
                 <RunsTab workflow={data} />
               </TabsContent>
+              {(data.events?.length ?? 0) > 0 && (
+                <TabsContent value="events">
+                  <WorkflowEventsTab workflow={data} />
+                </TabsContent>
+              )}
             </Tabs>
           )}
         </QueryState>

@@ -35,6 +35,8 @@ dependencies = [
     "websockets>=12.0",
     "pyyaml>=6.0",
     "nh3>=0.3.7",
+    # SPEC-088 COMP-013: work-event callbacks POST through a pinned httpx transport.
+    "httpx>=0.27,<1",
 ]
 
 [project.urls]

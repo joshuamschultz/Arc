@@ -25,6 +25,7 @@ from arcstore.mutation_fence import (
 
 from arcteam.workflow.narrator import RunNarrator
 from arcteam.workflow.runner import NodeDecisionError
+from arcteam.workflow.runner_contracts import TriggerContext
 from arcteam.workflow.stores import WorkflowRunStore
 
 from .conftest import RUNNER_DID, Definition, Node, RecordingSender, RecordingSink
@@ -89,7 +90,13 @@ async def test_repeated_tick_failure_is_escalated_via_audit_and_narration(
     # channel learned from real activity, not a hardcoded one. ``start_run``
     # itself only calls ``advance``, never ``tick``, so this needs an explicit
     # tick to populate the cache.
-    await runner.start_run("wired", input={}, initiator="operator", initiator_did="did:arc:x/1")
+    await runner.start_run(
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
+    )
     await runner.tick()
     assert runner._last_known_channels == [CHANNEL]
 
@@ -174,7 +181,13 @@ async def test_one_poisoned_run_still_does_not_stop_the_tick(stores: Any, regist
     async def always_raise(run_id: str) -> Any:
         raise RuntimeError("this run is poisoned")
 
-    await runner.start_run("wired", input={}, initiator="operator", initiator_did="did:arc:x/1")
+    await runner.start_run(
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
+    )
     runner.advance = always_raise  # type: ignore[method-assign]
 
     task = asyncio.create_task(runner.run_forever(interval=0.005))
@@ -193,7 +206,11 @@ async def test_poisoned_run_is_terminalized_after_bounded_advance_failures(
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink, advance_failure_threshold=3)
     started = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def poisoned(_: str) -> Any:
@@ -219,10 +236,18 @@ async def test_poisoned_run_failure_budget_survives_runner_restart(
     _, runs, _ = stores
     first = build(stores, registry, WIRED, advance_failure_threshold=3)
     poisoned = await first.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     healthy = await first.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def fail_one(run_id: str) -> Any:
@@ -310,7 +335,11 @@ async def test_uncertain_advance_errors_never_claim_known_terminal_failure(
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink, advance_failure_threshold=2)
     started = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     async def unknown(_: str) -> Any:
@@ -334,10 +363,18 @@ async def test_tracking_error_on_poisoned_run_does_not_starve_peer(
     sink = RecordingSink()
     runner = build(stores, registry, WIRED, audit_sink=sink)
     poisoned = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     healthy = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     original_advance = runner.advance
     original_record = runs.record_advance_failure
@@ -367,7 +404,12 @@ async def test_lost_materialization_response_restarts_without_duplicate_node(
     tasks, runs, _ = stores
     first = build(stores, registry, WIRED)
     started = await first.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1", detached=True
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        detached=True,
+        trigger=TriggerContext("manual"),
     )
     original_create = tasks.create_batch
     lost = False
@@ -399,10 +441,18 @@ async def test_real_missing_companion_state_does_not_starve_peer(
     runs = WorkflowRunStore(backend)
     runner = build((tasks, runs, task_store), registry, WIRED)
     poisoned = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     healthy = await runner.start_run(
-        "wired", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "wired",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
     await backend.mutable_delete("workflow_run_state", poisoned.run_id, actor_did=RUNNER_DID)
     seen: list[str] = []

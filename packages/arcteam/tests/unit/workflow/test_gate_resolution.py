@@ -13,6 +13,7 @@ from typing import Any
 
 from arcteam.workflow.control_plane import OPERATOR_ROLE, WorkflowControlPlane
 from arcteam.workflow.runner import WorkflowRunner
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import (
     RUNNER_DID,
@@ -89,7 +90,11 @@ async def reach_the_gate(stores: Any, registry: Any) -> tuple[Any, Any, str]:
     sink = RecordingSink()
     runner, plane = build(stores, registry, sink)
     run = await runner.start_run(
-        "reviewed", input={}, initiator="operator", initiator_did="did:arc:local:user/1"
+        "reviewed",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/1",
+        trigger=TriggerContext("manual"),
     )
     await complete_node(tasks, task_id(run.run_id, "draft", 0), SALES_DID, {"draft": "v1"})
     await runner.advance(run.run_id)
@@ -103,7 +108,7 @@ async def test_approve_lets_the_run_continue(stores: Any, registry: Any) -> None
     result = await plane.resolve_gate(
         task_id(run_id, "review", 0),
         decision="approve",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -120,7 +125,7 @@ async def test_fail_run_fails_the_whole_run(stores: Any, registry: Any) -> None:
         task_id(run_id, "review", 0),
         decision="fail_run",
         notes="not publishable",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -138,7 +143,7 @@ async def test_return_for_revision_reworks_the_node_with_the_notes(
         task_id(run_id, "review", 0),
         decision="return_for_revision",
         notes="tighten the opening",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -161,7 +166,7 @@ async def test_the_revised_work_re_reaches_the_gate(stores: Any, registry: Any) 
         task_id(run_id, "review", 0),
         decision="return_for_revision",
         notes="again",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -178,7 +183,7 @@ async def test_a_non_gate_task_is_refused(stores: Any, registry: Any) -> None:
     result = await plane.resolve_gate(
         task_id(run_id, "draft", 0),
         decision="approve",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 
@@ -192,7 +197,7 @@ async def test_an_unknown_decision_is_refused_before_any_write(stores: Any, regi
     result = await plane.resolve_gate(
         task_id(run_id, "review", 0),
         decision="looks_fine_to_me",
-        actor_did=OPERATOR,
+        decider_did=OPERATOR,
         actor_roles=OPERATOR_ROLES,
     )
 

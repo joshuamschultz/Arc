@@ -25,6 +25,7 @@ from arctrust import OperatorKey
 from arctrust.paths import arc_state, default_operator_key_path, workflows_dir
 
 from arcteam.workflow.runner import build_workflow_runner
+from arcteam.workflow.runner_contracts import TriggerContext
 
 # arcteam sits BELOW arcgateway and must never require it — the host half is
 # proved when the full workspace is installed, and skipped when it is not, so
@@ -147,7 +148,11 @@ async def test_a_live_runner_progresses_a_real_run_end_to_end(deployment: Any) -
     tasks = TaskStore(backend)
 
     run = await runner.start_run(
-        "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9999"
+        "onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/9999",
+        trigger=TriggerContext("manual"),
     )
     assert run.status == "running"
 
@@ -189,7 +194,11 @@ async def test_the_run_gets_a_shared_workspace(deployment: Any) -> None:
     )
 
     run = await runner.start_run(
-        "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+        "onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/9",
+        trigger=TriggerContext("manual"),
     )
 
     assert (root / "shared" / "runs" / run.run_id).is_dir()
@@ -335,7 +344,11 @@ async def test_the_default_factory_narrates_to_the_bound_channel(wired: Any) -> 
     runner = host._runner
 
     run = await runner.start_run(
-        "narrated", input={}, initiator="operator", initiator_did="did:arc:local:user/9999"
+        "narrated",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/9999",
+        trigger=TriggerContext("manual"),
     )
 
     messenger = runner._narrator._sender
@@ -372,7 +385,11 @@ async def test_two_runs_of_one_workflow_take_the_identical_path(deployment: Any)
 
     async def drive_one_run() -> tuple[list[tuple[str, str | None]], int, str]:
         run = await runner.start_run(
-            "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9999"
+            "onboarding",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:local:user/9999",
+            trigger=TriggerContext("manual"),
         )
         # Node rows are keyed wf/<run>/<node>/<iteration>; Task.run_id is the
         # arcrun correlation id, a different thing from the flow run id.
@@ -482,7 +499,11 @@ async def test_the_definition_stores_events_reach_the_audit_chain(
     )
 
     await runner.start_run(
-        "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+        "onboarding",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:local:user/9",
+        trigger=TriggerContext("manual"),
     )
 
     actions = [e.action for e in events]
@@ -616,5 +637,9 @@ async def test_a_foreign_signature_is_not_trusted_through_the_real_factory(
     # runs — two independent refusals, and the foreign key clears neither.
     with pytest.raises(Exception, match="not signed by the deployment operator key"):
         await runner.start_run(
-            "onboarding", input={}, initiator="operator", initiator_did="did:arc:local:user/9"
+            "onboarding",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:local:user/9",
+            trigger=TriggerContext("manual"),
         )

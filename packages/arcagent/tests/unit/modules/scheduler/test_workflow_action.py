@@ -281,7 +281,7 @@ class TestCircuitBreaker:
             arcstore_opener=arcstore_opener,
         )
         with pytest.raises(RuntimeError, match="refused to start"):
-            await start_workflow_run("nope")
+            await start_workflow_run("nope", trigger_kind="manual")
         _runtime.reset()
 
 

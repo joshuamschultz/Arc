@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+#: How far ahead of the verifier's clock a timestamp may be (clock drift).
+#: The one definition; ``principal_auth`` re-exports it.
+CLOCK_SKEW_SECONDS = 30
+
 
 class ReplayCache:
     """Sliding-window nonce cache. Rejects replays, stale and future timestamps.
@@ -18,7 +22,9 @@ class ReplayCache:
     reopening a replay for that request.
     """
 
-    def __init__(self, window_seconds: float = 300.0, max_skew_seconds: float = 30.0) -> None:
+    def __init__(
+        self, window_seconds: float = 300.0, max_skew_seconds: float = CLOCK_SKEW_SECONDS
+    ) -> None:
         self._window = window_seconds
         self._max_skew = max_skew_seconds
         # nonce -> POSIX time after which the entry may be forgotten.
@@ -34,7 +40,7 @@ class ReplayCache:
             del self._forget_after[nonce]
 
     def check_and_record(self, nonce: str, ts: str) -> bool:
-        """Return True if first-seen and fresh; False for replay or stale ``ts``."""
+        """Return True if first-seen and fresh; False for replay or out-of-window ``ts``."""
         now = datetime.now(UTC).timestamp()
         self._prune(now)
         try:

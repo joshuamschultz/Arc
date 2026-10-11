@@ -155,6 +155,7 @@ nav:
 
   - Reference:
       - API: reference/api.md
+      - Work intake and events API: reference/work-intake-api.md
       - CLI: reference/cli.md
       - Configuration keys: reference/config.md
       - Config catalog (every key): reference/config-catalog.md

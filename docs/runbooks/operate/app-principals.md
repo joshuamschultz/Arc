@@ -129,5 +129,6 @@ Every refusal is audited. The body is `{"error": "<code>"}`.
 | 403 | `operator_account_required` | A decision arrived with no named person where the tier needs one | Use a named account, or send `X-Arc-On-Behalf-Of` |
 | 403 | `second_operator_required` | Federal. The approver is the requester | A different operator approves |
 | 403 | `named_requester_required` | Federal. The request was not made by a live operator account | Issue again in the dashboard, signed in |
-| 429 | `rate_limited` | Over `rate_per_minute` | Slow down, or raise `[ui.principals] rate_per_minute` |
+| 413 | `body_too_large` | The body is over 128 KiB. Checked before the credential | Send a smaller body |
+| 429 | `rate_limited` | Over `rate_per_minute`, or this address is over `pre_auth_rate_per_minute` | Slow down, or raise the limit in `[ui.principals]` |
 | 503 | `account_authority_unavailable` | Arc cannot reach the account authority. It fails closed | Restore Vault or OpenBao. Retry |

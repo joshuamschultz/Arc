@@ -269,6 +269,13 @@ def _principal_handler(args: list[str]) -> None:
     principal_handler(args)
 
 
+def _callback_handler(args: list[str]) -> None:
+    """Dispatch wrapper."""
+    from arccli.commands.callback import callback_handler
+
+    callback_handler(args)
+
+
 def _accounts_handler(args: list[str]) -> None:
     """Dispatch wrapper."""
     from arccli.commands.accounts import accounts_handler
@@ -723,6 +730,14 @@ COMMAND_REGISTRY: list[CommandDef] = [
         args_hint="<subcommand>",
         cli_only=True,
         handler=_principal_handler,
+    ),
+    CommandDef(
+        name="callback",
+        description="Origins work-event callbacks may be sent to — add, list, remove",
+        category="Tools & Skills",
+        args_hint="<subcommand>",
+        cli_only=True,
+        handler=_callback_handler,
     ),
     CommandDef(
         name="accounts",

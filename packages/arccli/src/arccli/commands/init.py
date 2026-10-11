@@ -319,6 +319,31 @@ def _materialize_summary(result: Any) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Work-events key (SPEC-088 COMP-019)
+# ---------------------------------------------------------------------------
+
+
+def _provision_work_events_key(arc_dir: Path) -> None:
+    """Mint the work-events callback key for the deployment under ``arc_dir``.
+
+    A custody transit that cannot hold the key does not abort init: the deployment
+    then runs without signed callbacks (the dispatcher never starts, nothing is
+    sent unsigned), and the operator is told why.
+    """
+    from arctrust.operator_resolver import machine_security
+    from arctrust.signer import SignerError
+    from arctrust.work_event_signer import provision_work_event_key
+
+    try:
+        provision_work_event_key(machine_security(arc_dir), base=arc_dir)
+    except (OSError, SignerError, ValueError) as exc:
+        sys.stderr.write(
+            f"  Warning: work-events key not provisioned ({type(exc).__name__}: {exc}); "
+            "run callbacks are unavailable until `arc callback key` mints it.\n"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Subcommand implementation
 # ---------------------------------------------------------------------------
 
@@ -485,6 +510,12 @@ def _init(args: argparse.Namespace) -> None:
     operator = ensure_operator_key(arc_dir)
     if tier in ("enterprise", "federal"):
         _write(f"  Operator key fingerprint: {operator.public_key.hex()[:16]}")
+
+    # SPEC-088 COMP-019 — the dedicated work-events key that signs outbound
+    # callbacks, never the operator key. Minted once in the custody transit of
+    # the deployment just written (notary keystore, or Vault Transit when
+    # configured); re-running init leaves an existing key unchanged.
+    _provision_work_events_key(arc_dir)
 
     if tier in ("enterprise", "federal"):
         team_dir = arc_team(base=arc_dir)

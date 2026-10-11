@@ -16,6 +16,7 @@ from arctrust import generate_keypair
 from arcteam.workflow import DefinitionStore, parse_definition, sign_definition
 from arcteam.workflow.errors import PlaceholderOwnerError
 from arcteam.workflow.ownership import PLACEHOLDER_OWNER
+from arcteam.workflow.runner_contracts import TriggerContext
 
 from .conftest import Definition, Node
 from .test_runner_frontier import build
@@ -33,7 +34,11 @@ async def test_start_run_refuses_a_placeholder_owner(stores: Any, registry: Any)
 
     with pytest.raises(PlaceholderOwnerError) as caught:
         await runner.start_run(
-            "placeholder-flow", input={}, initiator="operator", initiator_did="did:arc:x/1"
+            "placeholder-flow",
+            input={},
+            initiator="operator",
+            initiator_did="did:arc:x/1",
+            trigger=TriggerContext("manual"),
         )
 
     assert caught.value.node_ids == ("draft",)
@@ -52,6 +57,7 @@ async def test_test_run_refuses_a_placeholder_owner_too(stores: Any, registry: A
             initiator="operator",
             initiator_did="did:arc:x/1",
             mode="test",
+            trigger=TriggerContext("manual"),
         )
 
 
@@ -65,7 +71,11 @@ async def test_a_node_that_names_its_own_agent_is_not_blocked(stores: Any, regis
     runner = build(stores, registry, flow)
 
     run = await runner.start_run(
-        "named-flow", input={}, initiator="operator", initiator_did="did:arc:x/1"
+        "named-flow",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        trigger=TriggerContext("manual"),
     )
 
     assert run.status == "running"

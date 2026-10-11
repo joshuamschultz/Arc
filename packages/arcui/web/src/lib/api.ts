@@ -118,13 +118,14 @@ export async function apiGetText(path: string, signal?: AbortSignal): Promise<st
   return res.text()
 }
 
-async function apiSend<T>(
+/** Send a JSON request; the response when it is 2xx, else the `ApiError`. */
+async function send(
   method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
   path: string,
   body?: unknown,
   headers?: Record<string, string>,
   timeoutMs = 60_000,
-): Promise<T> {
+): Promise<Response> {
   let res: Response
   try {
     res = await fetch(path, {
@@ -142,9 +143,31 @@ async function apiSend<T>(
   if (!res.ok) {
     throw await failedResponse(res)
   }
+  return res
+}
+
+async function apiSend<T>(
+  method: 'POST' | 'PATCH' | 'PUT' | 'DELETE',
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+  timeoutMs = 60_000,
+): Promise<T> {
+  const res = await send(method, path, body, headers, timeoutMs)
   // 204 No Content (e.g. DELETE) carries no body — parsing it as JSON would throw.
   if (res.status === 204) return undefined as T
   return (await res.json()) as T
+}
+
+/** POST that also reports which success it was: a route that answers 201 for
+ *  "created" and 200 for "already done" (an idempotent replay) is read here. */
+export async function apiPostWithStatus<T>(
+  path: string,
+  body?: unknown,
+  headers?: Record<string, string>,
+): Promise<{ status: number; body: T }> {
+  const res = await send('POST', path, body, headers)
+  return { status: res.status, body: (await res.json()) as T }
 }
 
 /** POST; `timeoutMs` lifts the default 60s ceiling for a known-long operator action

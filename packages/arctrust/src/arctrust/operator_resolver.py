@@ -36,6 +36,7 @@ from arctrust.signer import (
     VAULT_TRANSIT,
     CustodyTransit,
     FileNotaryTransit,
+    KeyProvisioningTransit,
     Signer,
     SignerConfig,
     SignerError,
@@ -125,14 +126,7 @@ def operator_transit_for(security: Any, base: Base = None) -> CustodyTransit:
     transit that cannot serve raises ``SignerError``; nothing falls back to an
     in-process key.
     """
-    vault = getattr(security, "vault", None)
-    transit: CustodyTransit
-    if vault is not None:
-        transit, where = _vault_transit(vault, security.signing_algorithm), vault.addr
-    else:
-        keystore = _notary_keystore(security, base)
-        transit = FileNotaryTransit(keystore, algorithm=security.signing_algorithm)
-        where = str(keystore)
+    transit, where = _select_transit(security, base)
     try:
         transit.public_key(OPERATOR_KEY_REF)
     except (OSError, SignerError) as exc:
@@ -142,6 +136,28 @@ def operator_transit_for(security: Any, base: Base = None) -> CustodyTransit:
             "signing (fail-closed). Provision the notary keystore or [security.vault]."
         ) from exc
     return transit
+
+
+def custody_transit_for(security: Any, base: Base = None) -> KeyProvisioningTransit:
+    """The deployment's custody transit for a named NON-operator key.
+
+    Same selection as :func:`operator_transit_for` (``[security.vault]`` → Vault
+    Transit, otherwise the local notary keystore), but it does not require the
+    operator key to live there: a personal deployment keeps its operator key on
+    disk and still holds dedicated keys (the work-events key) in the notary.
+    Whether the named key exists is the caller's question; this never mints,
+    never reads the operator key, and never falls back to in-process signing.
+    """
+    return _select_transit(security, base)[0]
+
+
+def _select_transit(security: Any, base: Base) -> tuple[KeyProvisioningTransit, str]:
+    """The one Vault-or-notary choice, with where it points (for error text)."""
+    vault = getattr(security, "vault", None)
+    if vault is not None:
+        return _vault_transit(vault, security.signing_algorithm), vault.addr
+    keystore = _notary_keystore(security, base)
+    return FileNotaryTransit(keystore, algorithm=security.signing_algorithm), str(keystore)
 
 
 def _notary_keystore(security: Any, base: Base) -> Path:

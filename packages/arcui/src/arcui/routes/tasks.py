@@ -14,12 +14,14 @@ edited here — see SDD §6.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import uuid
 from typing import Any
 
-from arcstore.tasks import Task
+from arcstore.tasks import Task, TaskLinkError
 from arcteam.mail import MailSendRequest
+from arcteam.workflow.runner_contracts import HUMAN_STEP_KINDS
 from pydantic import ValidationError
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -35,15 +37,31 @@ from arcui.acting import (
 from arcui.audit import emit_mutation_audit
 from arcui.messaging import OPERATOR_MAIL_ENTITY
 from arcui.principals import Scope
+from arcui.request_body import read_capped_body
 from arcui.schemas import ErrorResponse
 
 _logger = logging.getLogger(__name__)
 
-_CREATE_FIELDS = ("description", "priority", "owner_did", "tags", "requires_review")
+MAX_BODY_BYTES = 64 * 1024
+"""The largest task create/patch/move body read; the same cap as ``POST /api/runs``."""
+
+# Fields both create and PATCH accept, validated through the ``Task`` model
+# with the deployment's tier and clearance (SPEC-088 REQ-602/603).
+_EDITABLE_FIELDS = (
+    "description",
+    "priority",
+    "owner_did",
+    "tags",
+    "requires_review",
+    "due_at",
+    "classification",
+)
+# Links are create-time only: once written they are the store's to manage.
+_CREATE_FIELDS = (*_EDITABLE_FIELDS, "parent_id", "blocked_by")
 # Fields a PATCH may write. A raw patch is never trusted wholesale (SEC-F4):
-# status/id/created_at/run_id/blocked_by are managed by the store's own
+# status/id/created_at/run_id/blocked_by/metadata are managed by the store's own
 # transitions, never by a client-supplied key.
-_PATCH_FIELDS = ("title", *_CREATE_FIELDS)
+_PATCH_FIELDS = ("title", *_EDITABLE_FIELDS)
 
 
 def _first_error_message(exc: ValidationError) -> str:
@@ -60,23 +78,25 @@ def _first_error_message(exc: ValidationError) -> str:
     return f"{loc}: {msg}"
 
 
-def _valid_edits(
-    task_id: str, edits: dict[str, Any], *, actor_did: str, allow_external_refs: bool
-) -> str | None:
+def _validated_edits(
+    task_id: str, edits: dict[str, Any], *, actor_did: str, context: dict[str, Any]
+) -> dict[str, Any] | str:
     """Validate patched fields through the ``Task`` model (SEC-F2).
 
     A partial patch never constructs a full ``Task``, so it would otherwise
-    bypass the model's injection/oversized/zero-width sanitizer. Build a probe
-    task carrying the edited values and let the model's field validators run.
-    Returns ``None`` when the patch is safe, else the client-facing reason.
+    bypass the model's injection/oversized/zero-width sanitizer and the
+    tier-gated classification parse. Build a probe task carrying the edited
+    values and let the model's field validators run. Returns the edits as the
+    model normalized them (a classification becomes its ladder name), else the
+    client-facing reason.
     """
     probe: dict[str, Any] = {"id": task_id, "creator_did": actor_did, "title": "probe"}
     probe.update(edits)
     try:
-        Task.model_validate(probe, context={"allow_external_refs": allow_external_refs})
+        validated = Task.model_validate(probe, context=context)
     except ValidationError as exc:
         return _first_error_message(exc)
-    return None
+    return {key: getattr(validated, key) for key in edits}
 
 
 def _allow_external_refs(request: Request) -> bool:
@@ -88,6 +108,22 @@ def _allow_external_refs(request: Request) -> bool:
     return bool(getattr(request.app.state, "allow_external_task_refs", False))
 
 
+def _validation_context(request: Request) -> dict[str, Any]:
+    """The ``Task`` validation context for a caller-supplied create or patch.
+
+    Carries the ingest policy, the deployment tier (strict classification
+    labels at federal) and the deployment clearance (no label above it, at any
+    tier) so every human or app write is parsed the same way (SPEC-088 REQ-603).
+    """
+    config = getattr(request.app.state, "principals_config", None)
+    return {
+        "allow_external_refs": _allow_external_refs(request),
+        # Absent on a bare app: the strictest tier, never a looser one.
+        "tier": "federal" if config is None else config.tier,
+        "clearance": str(getattr(request.app.state, "inbox_clearance", "UNCLASSIFIED")),
+    }
+
+
 def _error(message: str, status: int) -> JSONResponse:
     return JSONResponse(ErrorResponse(error=message).model_dump(mode="json"), status_code=status)
 
@@ -97,17 +133,65 @@ def _is_operator(request: Request) -> bool:
     return getattr(request.state, "role", None) == "operator"
 
 
-async def _json_body(request: Request) -> dict[str, Any] | None:
+async def _json_body(
+    request: Request, *, target: str, operation: str
+) -> dict[str, Any] | None | JSONResponse:
+    """The body as a JSON object (None when it is not one), or one audited 413.
+
+    Read through :func:`read_capped_body`, so a body over
+    :data:`MAX_BODY_BYTES` is refused before it is buffered or parsed.
+    """
+    raw = await read_capped_body(request, MAX_BODY_BYTES)
+    if raw is None:
+        emit_mutation_audit(
+            request, target=target, operation=operation, outcome="denied", detail="body_too_large"
+        )
+        return _error(f"body over {MAX_BODY_BYTES} bytes", 413)
     try:
-        body = await request.json()
-    except Exception:  # reason: malformed body is a client error, not a 500
+        body = json.loads(raw)
+    except ValueError:  # JSONDecodeError and UnicodeDecodeError both subclass it
         return None
     return body if isinstance(body, dict) else None
 
 
+def _new_task(request: Request, body: dict[str, Any], title: str) -> Task | str:
+    """Build the new task from the body, or return the client-facing reason.
+
+    Caller metadata is namespaced under ``metadata.app`` (D-850) so a caller
+    can never write the platform keys that make a row a workflow node. The
+    creator is SPEC-087's acting identity. A rejected value (injection guard,
+    over-length, tier-blocked URL, naive deadline, label above clearance) is a
+    client error, not a 500.
+    """
+    fields: dict[str, Any] = {
+        "id": str(uuid.uuid4()),
+        "title": title,
+        "creator_did": acting_identity(request).actor_did,
+    }
+    fields.update({key: body[key] for key in _CREATE_FIELDS if key in body})
+    if "metadata" in body:
+        if not isinstance(body["metadata"], dict):
+            return "metadata: must be a JSON object"
+        fields["metadata"] = {"app": body["metadata"]}
+    try:
+        return Task.model_validate(fields, context=_validation_context(request))
+    except ValidationError as exc:
+        return _first_error_message(exc)
+
+
+def _refuse_create(request: Request, reason: str) -> JSONResponse:
+    """One audited 400 for a create the caller was allowed to try but sent badly."""
+    emit_mutation_audit(
+        request, target="task:new", operation="task.create", outcome="denied", detail=reason
+    )
+    return _error(reason, 400)
+
+
 async def create_task(request: Request) -> JSONResponse:
     """POST /api/team/tasks — create a task (operator, or an app bound to the owner agent)."""
-    body = await _json_body(request)
+    body = await _json_body(request, target="task:new", operation="task.create")
+    if isinstance(body, JSONResponse):
+        return body
     owner = (body or {}).get("owner_did")
     # An app needs ``tasks:write`` bound to the owner agent; an unowned task
     # binds no agent, so an app is refused.
@@ -126,21 +210,15 @@ async def create_task(request: Request) -> JSONResponse:
     if not isinstance(title, str) or not title.strip():
         return _error("missing or blank title", 400)
 
-    creator = acting_identity(request).actor_did
-    fields: dict[str, Any] = {"id": str(uuid.uuid4()), "title": title, "creator_did": creator}
-    for key in _CREATE_FIELDS:
-        if key in body:
-            fields[key] = body[key]
-    # A rejected value (injection guard, over-length, tier-blocked URL) is a
-    # client error, not a 500: validate here and surface the reason as a 400.
-    try:
-        task = Task.model_validate(
-            fields, context={"allow_external_refs": _allow_external_refs(request)}
-        )
-    except ValidationError as exc:
-        return _error(_first_error_message(exc), 400)
+    task = _new_task(request, body, title)
+    if isinstance(task, str):
+        return _refuse_create(request, task)
 
     store = request.app.state.task_store
+    try:
+        await store.validate_links(task.parent_id, task.blocked_by)
+    except TaskLinkError as exc:
+        return _refuse_create(request, str(exc))
     created = await store.create(task)
 
     notification_status = "not_applicable"
@@ -193,7 +271,9 @@ async def patch_task(request: Request) -> JSONResponse:
         )
         return _error("operator_role_required", 403)
 
-    body = await _json_body(request)
+    body = await _json_body(request, target=target, operation="task.update")
+    if isinstance(body, JSONResponse):
+        return body
     if body is None:
         return _error("expected a JSON object body", 400)
     # Allowlist (SEC-F4): only editable fields survive; a client-supplied
@@ -202,14 +282,14 @@ async def patch_task(request: Request) -> JSONResponse:
     if not edits:
         return _error("no editable fields", 400)
     actor = acting_identity(request).actor_did
-    reason = _valid_edits(
-        task_id, edits, actor_did=actor, allow_external_refs=_allow_external_refs(request)
+    validated = _validated_edits(
+        task_id, edits, actor_did=actor, context=_validation_context(request)
     )
-    if reason is not None:
-        return _error(reason, 400)
+    if isinstance(validated, str):
+        return _error(validated, 400)
 
     store = request.app.state.task_store
-    updated, outcome = await store.edit(task_id, edits, actor_did=actor)
+    updated, outcome = await store.edit(task_id, validated, actor_did=actor)
     if outcome == "not_found":
         return _error("not found", 404)
     if outcome in ("in_progress", "conflict"):
@@ -304,7 +384,9 @@ async def move_task(request: Request) -> Response:
         )
         return _error("operator_role_required", 403)
 
-    body = await _json_body(request)
+    body = await _json_body(request, target=target, operation="task.move")
+    if isinstance(body, JSONResponse):
+        return body
     status = str((body or {}).get("status") or "")
     if not status:
         return _error('expected {"status": <column>}', 400)
@@ -350,9 +432,13 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     # nothing". Gate resolution belongs to the runner's control plane, so it is
     # relayed there rather than flipped in the task store here.
     # It follows the gate route's rules: ``gates:resolve`` on the gate's owner
-    # agent, then the decider, then the control plane's approver list.
-    if str(task.metadata.get("node_kind", "")) == "gate":
-        return await _resolve_gate(request, task_id, approve=approve, target=target)
+    # agent, then the decider, then the control plane's approver list. A
+    # human_input row is the same kind of waiting step and loops the same way.
+    node_kind = str(task.metadata.get("node_kind", ""))
+    if node_kind in HUMAN_STEP_KINDS:
+        return await _resolve_gate(
+            request, task_id, approve=approve, target=target, node_kind=node_kind
+        )
 
     refused = control_refusal(
         request, Scope.TASKS_WRITE, task.owner_did, target=target, operation=operation
@@ -378,19 +464,39 @@ async def _review_decision(request: Request, *, approve: bool) -> Response:
     return JSONResponse(updated.model_dump(mode="json"))
 
 
-async def _resolve_gate(request: Request, task_id: str, *, approve: bool, target: str) -> Response:
-    """Relay a gate task's approve/reject to the runner's gate control plane.
+async def _resolve_gate(
+    request: Request, task_id: str, *, approve: bool, target: str, node_kind: str
+) -> Response:
+    """Relay a human step's approve/reject to the runner's gate control plane.
 
-    Approve continues the run; reject fails it and records the rejection the
-    runner acts on — the terminal outcome the generic review flip could not
-    produce. When no runner is embedded the plane is absent and the operator is
-    told so (503) rather than silently falling back to the looping path.
+    Approve continues the run; reject fails it (``fail_run``, for a gate and a
+    human_input alike) and records the rejection the runner acts on — the
+    terminal outcome the generic review flip could not produce. A human_input
+    has no ``approve``: it needs ``submit`` with a payload, so approve is one
+    audited 409 naming the gate route. When no runner is embedded the plane is
+    absent and the operator is told so (503) rather than silently falling back
+    to the looping path.
     """
     from arcui.routes.workflows import GATE_OPERATION, _relay, admit_gate_decider
 
     admitted = await admit_gate_decider(request, task_id, target=target)
     if isinstance(admitted, Response):
         return admitted
+    if approve and node_kind == "human_input":
+        emit_mutation_audit(
+            request,
+            target=target,
+            operation=GATE_OPERATION,
+            outcome="denied",
+            detail="human_input_needs_submit",
+        )
+        return JSONResponse(
+            {
+                "error": "human_input_needs_submit",
+                "use": f'POST /api/workflow-tasks/{task_id}/gate {{"decision": "submit", ...}}',
+            },
+            status_code=409,
+        )
     decision = "approve" if approve else "fail_run"
     result = await admitted.plane.resolve_gate(
         task_id, decision=decision, notes="", actor=admitted.actor
@@ -399,12 +505,20 @@ async def _resolve_gate(request: Request, task_id: str, *, approve: bool, target
 
 
 async def approve_task(request: Request) -> Response:
-    """POST /api/tasks/{id}/approve — approve a review-gated task (review -> done)."""
+    """POST /api/tasks/{id}/approve — approve a review-gated task (review -> done).
+
+    A workflow gate is relayed to the gate plane; a human_input row is refused
+    (it needs ``submit`` with a payload on the gate route).
+    """
     return await _review_decision(request, approve=True)
 
 
 async def reject_task(request: Request) -> Response:
-    """POST /api/tasks/{id}/reject — reject a review-gated task (review -> todo)."""
+    """POST /api/tasks/{id}/reject — reject a review-gated task (review -> todo).
+
+    A workflow gate or human_input row is relayed to the gate plane instead and
+    fails its run.
+    """
     return await _review_decision(request, approve=False)
 
 

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query'
-import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm, apiPut } from './api'
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostForm, apiPostWithStatus, apiPut } from './api'
+import { newRequestId } from './request-id'
 import { auditQuery, type AuditFilters } from './audit-query'
 import type {
   AgentConnectorsResponse,
@@ -130,6 +131,7 @@ import type {
   CustodyStatus,
   WorkflowRunDetail,
   WorkflowRunsResponse,
+  WorkflowRunSummary,
   WorkflowsListResponse,
 } from './types'
 
@@ -1621,6 +1623,30 @@ export const useRunWorkflow = (id: string) => {
 }
 
 /**
+ * Fire a declared event (SPEC-088 REQ-610). Every call carries a fresh
+ * `Idempotency-Key`: the server derives the run id from it, answers 201 for a
+ * new run and 200 when that key already started one.
+ */
+export const useFireWorkflowEvent = (workflowId: string) => {
+  const queryClient = useQueryClient()
+  return useMutation<
+    { replayed: boolean; run: WorkflowRunSummary },
+    Error,
+    { event: string; payload: Record<string, unknown> }
+  >({
+    mutationFn: async ({ event, payload }) => {
+      const { status, body } = await apiPostWithStatus<WorkflowRunSummary>(
+        `/api/workflows/${encodeURIComponent(workflowId)}/events/${encodeURIComponent(event)}`,
+        payload,
+        { 'Idempotency-Key': newRequestId() },
+      )
+      return { replayed: status === 200, run: body }
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['workflow', workflowId, 'runs'] }),
+  })
+}
+
+/**
  * Retry one failed node of a terminal-failed run (operator). `acceptSideEffectRepeat`
  * is the operator's explicit release of a non-idempotent tool; it is sent only
  * when true, and the server honours nothing the operator did not say.
@@ -1754,11 +1780,16 @@ export const useCancelWorkflowRun = (runId: string) => {
 // (REQ-247) — the control plane, not this hook, enforces that.
 export const useResolveGate = (taskId: string) => {
   const queryClient = useQueryClient()
-  return useMutation<Dict, Error, { decision: string; notes?: string }>({
-    mutationFn: ({ decision, notes }) =>
+  return useMutation<
+    Dict,
+    Error,
+    { decision: string; notes?: string; payload?: Record<string, unknown> }
+  >({
+    mutationFn: ({ decision, notes, payload }) =>
       apiPost(`/api/workflow-tasks/${encodeURIComponent(taskId)}/gate`, {
         decision,
         notes,
+        payload,
       }),
     onSuccess: () =>
       queryClient.invalidateQueries({

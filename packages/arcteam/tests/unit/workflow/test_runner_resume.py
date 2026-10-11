@@ -23,6 +23,7 @@ from arcstore.backends.memory import FakeBackend
 from arcstore.tasks import SERVICE_RESTART_INTERRUPTED, Task, TaskStore
 
 from arcteam.workflow.runner import WorkflowRunner
+from arcteam.workflow.runner_contracts import TriggerContext
 from arcteam.workflow.stores import WorkflowRunStore, WorkflowTaskStore
 
 from .conftest import (
@@ -176,6 +177,7 @@ async def drive(world: World, run_id: str, *, max_steps: int = 40) -> None:
                     initiator_did="did:arc:x/scheduler",
                     run_id=run_id,
                     detached=True,
+                    trigger=TriggerContext("cron"),
                 )
                 fired = True
             record = await world.runs.get(run_id)
@@ -256,6 +258,7 @@ async def test_restart_between_materialize_and_journal_creates_exactly_one_row()
         initiator_did="did:arc:x/1",
         run_id="run-j",
         detached=True,
+        trigger=TriggerContext("manual"),
     )
     with pytest.raises(Crash):
         await first.advance("run-j")
@@ -278,7 +281,12 @@ async def test_restart_resumes_from_last_completed_node_without_rerunning_done_n
     world = World(backend)
     runner = world.new_runner()
     await runner.start_run(
-        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-r"
+        "chain3",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-r",
+        trigger=TriggerContext("manual"),
     )
     await world.execute_ready("run-r")  # node one done
     await runner.advance("run-r")
@@ -318,7 +326,12 @@ async def test_node_states_reconciled_from_rows_on_resume() -> None:
     world = World(backend)
     runner = world.new_runner()
     await runner.start_run(
-        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-n"
+        "chain3",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-n",
+        trigger=TriggerContext("manual"),
     )
     # The node finishes while no runner is alive to observe it.
     await world.execute_ready("run-n")
@@ -337,7 +350,12 @@ async def test_reclaim_changes_attempt_key() -> None:
     world = World(backend)
     runner = world.new_runner()
     await runner.start_run(
-        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-k"
+        "chain3",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-k",
+        trigger=TriggerContext("manual"),
     )
     one = task_id("run-k", "one")
     row = await world.tasks.get(one)
@@ -381,6 +399,7 @@ async def test_double_fire_same_occurrence_creates_one_run() -> None:
             initiator_did="did:arc:x/scheduler",
             run_id="run-occ",
             detached=True,
+            trigger=TriggerContext("cron"),
         )
     await runner.tick()
     await runner.tick()
@@ -397,7 +416,12 @@ async def test_resume_without_the_lease_waits_for_the_next_tick() -> None:
     world = World(backend)
     runner = world.new_runner()
     await runner.start_run(
-        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-l"
+        "chain3",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-l",
+        trigger=TriggerContext("manual"),
     )
     await world.execute_ready("run-l")
 
@@ -432,7 +456,12 @@ async def test_reclaim_stamps_reclaimed_at_on_the_row() -> None:
     await backend.start()
     world = World(backend)
     await world.new_runner().start_run(
-        "chain3", input={}, initiator="operator", initiator_did="did:arc:x/1", run_id="run-ra"
+        "chain3",
+        input={},
+        initiator="operator",
+        initiator_did="did:arc:x/1",
+        run_id="run-ra",
+        trigger=TriggerContext("manual"),
     )
     one = task_id("run-ra", "one")
     row = await world.tasks.get(one)

@@ -24,6 +24,7 @@ from arcagent.modules.scheduler.models import ScheduleEntry
 from arcagent.modules.scheduler.occurrence import scheduled_occurrence
 from arcstore.backends.memory import FakeBackend
 from arcteam.workflow.runner import build_workflow_runner
+from arcteam.workflow.runner_contracts import TriggerContext
 from arctrust import LocalRunTriggerIssuer, OperatorKey
 
 _OWNER_DID = "did:arc:test:sales"
@@ -105,6 +106,7 @@ async def test_occurrence_run_id_is_the_runner_run_id_and_the_signed_request_run
         run_id=occurrence.run_id,
         trigger_digest=occurrence.definition_digest,
         detached=True,
+        trigger=TriggerContext("manual"),
     )
     second = await runner.start_run(
         "nightly",
@@ -114,6 +116,7 @@ async def test_occurrence_run_id_is_the_runner_run_id_and_the_signed_request_run
         run_id=restarted.run_id,
         trigger_digest=restarted.definition_digest,
         detached=True,
+        trigger=TriggerContext("manual"),
     )
     assert first.run_id == second.run_id == occurrence.run_id
 

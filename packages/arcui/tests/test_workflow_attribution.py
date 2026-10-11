@@ -313,8 +313,8 @@ class TestSessionGateAttribution:
 
         assert resp.status_code == 200, resp.text
         settled = await h.runner.tasks.get(gate.id)
-        assert settled.metadata["gate_actor_did"] == h.people.boss
-        assert settled.metadata["gate_actor_did"] != FIXED_OPERATOR_DID
+        assert settled.output["decided_by"] == h.people.boss
+        assert settled.output["decided_by"] != FIXED_OPERATOR_DID
 
     async def test_session_gate_decision_names_account_in_control_plane_audit(
         self, h: Harness
@@ -339,7 +339,7 @@ class TestSessionGateAttribution:
 
         assert resp.status_code == 200, resp.text
         settled = await h.runner.tasks.get(gate.id)
-        assert settled.metadata["gate_actor_did"] == h.people.boss
+        assert settled.output["decided_by"] == h.people.boss
 
 
 # --- gate decisions by an app ----------------------------------------------------------
@@ -374,7 +374,7 @@ class TestAppGateDecision:
 
         assert resp.status_code == 200, resp.text
         settled = await h.runner.tasks.get(gate.id)
-        assert settled.metadata["gate_actor_did"] == h.people.listed
+        assert settled.output["decided_by"] == h.people.listed
 
     async def test_app_gate_audit_names_app_and_person(self, h: Harness) -> None:
         run_id = await h.start(SALES_FLOW)
@@ -413,7 +413,7 @@ class TestAppGateDecision:
         )
 
         assert resp.status_code == 200, resp.text
-        assert (await h.runner.tasks.get(gate.id)).metadata["gate_actor_did"] == h.people.boss
+        assert (await h.runner.tasks.get(gate.id)).output["decided_by"] == h.people.boss
 
     async def test_app_alone_is_no_approver_and_is_denied(self, h: Harness) -> None:
         """An app acting for nobody has no roles and is on no list: it adds no authority."""
@@ -484,7 +484,7 @@ class TestAppGateViaTaskApprove:
         )
 
         assert resp.status_code == 200, resp.text
-        assert (await h.runner.tasks.get(gate.id)).metadata["gate_actor_did"] == h.people.listed
+        assert (await h.runner.tasks.get(gate.id)).output["decided_by"] == h.people.listed
 
     async def test_app_for_unlisted_viewer_is_denied_by_control_plane(self, h: Harness) -> None:
         run_id = await h.start(SALES_FLOW)
@@ -566,7 +566,7 @@ class TestFederalStaticToken:
         )
 
         assert resp.status_code == 200, resp.text
-        assert (await fed.runner.tasks.get(gate.id)).metadata["gate_actor_did"] == fed.people.boss
+        assert (await fed.runner.tasks.get(gate.id)).output["decided_by"] == fed.people.boss
 
 
 # --- running a workflow ----------------------------------------------------------------
