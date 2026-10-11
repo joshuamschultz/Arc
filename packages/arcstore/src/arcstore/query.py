@@ -89,11 +89,15 @@ async def audit_totals(backend: StorageBackend) -> dict[str, int]:
     """Ledger-wide counts for the audit summary — the whole mirror, not one page.
 
     ``total`` counts mirrored records (chain-break markers excluded), ``verified``
-    those whose chain link verified on ingest, ``broken`` the chain breaks found.
+    those whose chain link verified on ingest, ``broken`` the chain breaks found
+    and not since cleared by a reverify walk.
     """
-    broken = await backend.count(AUDIT_TABLE, where={"action": CHAIN_BROKEN_ACTION})
+    markers = await backend.count(AUDIT_TABLE, where={"action": CHAIN_BROKEN_ACTION})
+    broken = await backend.count(
+        AUDIT_TABLE, where={"action": CHAIN_BROKEN_ACTION, "outcome": "broken"}
+    )
     return {
-        "total": await backend.count(AUDIT_TABLE) - broken,
+        "total": await backend.count(AUDIT_TABLE) - markers,
         "verified": await backend.count(AUDIT_TABLE, where={"verified": True}),
         "broken": broken,
     }

@@ -229,26 +229,59 @@ class StoreIngest:
         The one-shot repair for rows frozen ``verified=false`` (mirrored before
         the key was passed, or before a tamper was found). Rows are re-projected
         in full, so older rows also gain ``signer``/causal columns. Missing rows
-        are inserted. Returns ``{events, verified, broken}`` for what it walked.
+        are inserted. Each file's cursor moves to the offset the walk reached, so
+        the primed verifier and the cursor agree and the next tick resumes where
+        the walk ended. A stored break marker the walk proves false is cleared,
+        never deleted. Returns ``{events, verified, broken}`` for what it walked.
         """
         summary = {"events": 0, "verified": 0, "broken": 0}
         async with self._worm_lock:
             for active in self._worm_chains():
                 state = self._new_state()
                 rows: list[tuple[str, dict[str, Any]]] = []
+                cursors: dict[str, int] = {}
                 for path in chain_files(active):
-                    file_rows, _ = await asyncio.to_thread(
+                    file_rows, walked_to = await asyncio.to_thread(
                         _verify_file, state, path, 0, -1, active
                     )
                     rows.extend(file_rows)
+                    first_seq = await asyncio.to_thread(_first_seq, path)
+                    if first_seq is not None:
+                        cursors[f"worm:{active.name}@{first_seq}"] = walked_to
                 await self._backend.upsert_many(AUDIT_TABLE, rows)
                 await self._backend.merge_rows(AUDIT_TABLE, rows)
+                await self._clear_disproven_breaks(active.stem, state)
+                for cursor, offset in cursors.items():
+                    await self._backend.set_cursor(cursor, offset)
                 self._chains[active] = state
                 events = [r for _, r in rows if r.get("action") != CHAIN_BROKEN_ACTION]
                 summary["events"] += len(events)
                 summary["verified"] += sum(1 for r in events if r["verified"])
                 summary["broken"] += len(rows) - len(events)
         return summary
+
+    async def _clear_disproven_breaks(self, chain: str, state: _ChainState) -> None:
+        """Mark each stored break the walk verified past as cleared (no erasure).
+
+        The walk vouches only for records before its own break, so a marker at
+        or after that seq stands. Without a key it vouches for nothing.
+        """
+        if state.verifier is None:
+            return
+        verified_through = state.verifier.next_seq
+        markers = await self._backend.query(
+            AUDIT_TABLE,
+            where={"action": CHAIN_BROKEN_ACTION, "chain": chain, "outcome": "broken"},
+        )
+        cleared_at = datetime.now(UTC).isoformat()
+        patch = {"outcome": "cleared", "cleared_at": cleared_at, "cleared_by": _INGEST_ACTOR}
+        disproven = [
+            (_broken_key(chain, m["seq"]), patch)
+            for m in markers
+            if isinstance(m.get("seq"), int) and m["seq"] < verified_through
+        ]
+        if disproven:
+            await self._backend.merge_rows(AUDIT_TABLE, disproven)
 
     # -- skill candidate store (SPEC-054 REQ-120) ---------------------------
 
@@ -505,9 +538,13 @@ def _read_worm_lines(
     return out, position
 
 
+def _broken_key(chain: str, seq: int) -> str:
+    return f"{CHAIN_BROKEN_ACTION}:{chain}:{seq}"
+
+
 def _broken_row(chain: str, seq: int) -> tuple[str, dict[str, Any]]:
     return (
-        f"{CHAIN_BROKEN_ACTION}:{chain}:{seq}",
+        _broken_key(chain, seq),
         {
             "seq": seq,
             "ts": datetime.now(UTC).isoformat(),
