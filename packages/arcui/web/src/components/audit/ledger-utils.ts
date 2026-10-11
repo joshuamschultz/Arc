@@ -107,12 +107,16 @@ export type Verification =
   | { state: 'unverified' }
   | { state: 'unsigned' }
   | { state: 'broken'; seq: number | string | undefined }
+  | { state: 'cleared'; seq: number | string | undefined }
 
 /** The chain-break marker row is the ingest's finding; its `seq` is where it broke. */
 export const CHAIN_BROKEN_ACTION = 'audit.chain.broken'
 
 export function verificationOf(e: AuditEvent): Verification {
-  if (e.action === CHAIN_BROKEN_ACTION) return { state: 'broken', seq: e.seq }
+  if (e.action === CHAIN_BROKEN_ACTION) {
+    // A reverify walk that verified past the marker's seq clears it; the row stays.
+    return { state: e.outcome === 'cleared' ? 'cleared' : 'broken', seq: e.seq }
+  }
   if (!isSigned(e)) return { state: 'unsigned' }
   return isVerified(e) ? { state: 'verified' } : { state: 'unverified' }
 }

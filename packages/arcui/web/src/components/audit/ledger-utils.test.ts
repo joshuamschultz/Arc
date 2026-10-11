@@ -88,6 +88,13 @@ describe('verificationOf', () => {
     })
   })
 
+  it('reports a break marker a reverify walk cleared', () => {
+    expect(verificationOf({ action: 'audit.chain.broken', seq: 7, outcome: 'cleared' })).toEqual({
+      state: 'cleared',
+      seq: 7,
+    })
+  })
+
   it('reports an unverified signed row', () => {
     expect(verificationOf({ verified: 0, signature: 's' })).toEqual({ state: 'unverified' })
   })

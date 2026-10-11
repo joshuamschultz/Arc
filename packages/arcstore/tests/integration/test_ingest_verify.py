@@ -196,3 +196,101 @@ async def test_an_app_caused_row_on_an_agent_chain_is_a_control_action(tmp_path:
     assert row["chain"] == "audit-chain-olivia"
     assert row["initiator"] == "app"
     assert row["is_control"] is True
+
+
+class _AppendDuringReverify(FakeBackend):
+    """A writer appends while reverify holds the WORM lock, after its walk ended."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.during_merge: Any = None
+
+    async def merge_rows(self, table: str, rows: list[tuple[str, dict[str, Any]]]) -> int:
+        if self.during_merge is not None:
+            self.during_merge()
+            self.during_merge = None
+        return await super().merge_rows(table, rows)
+
+
+async def test_reverify_leaves_the_cursor_at_the_offset_it_walked(tmp_path: Path) -> None:
+    """The DGX false breaks: records appended before and during a long reverify.
+
+    The walk consumed records past the old cursor but left the cursor behind, so
+    the next tick fed those records again to a verifier that expected later
+    seqs and wrote an ``audit.chain.broken`` row for a chain that is intact.
+    """
+    world = _World(tmp_path)
+    world.backend = _AppendDuringReverify()
+    ingest = world.ingest()
+    world.write(3)
+    await ingest.scan_once()
+    world.write(2, start=3)  # lands after the last tick, before the reverify walk
+    walked: list[int] = []
+
+    def _writer_appends() -> None:
+        walked.append(world.path.stat().st_size)
+        world.write(2, start=5)
+
+    world.backend.during_merge = _writer_appends
+    await ingest.reverify()
+    assert await world.backend.get_cursor(f"worm:{_CHAIN}@0") == walked[0]
+
+    await ingest.scan_once()
+    assert await world.broken() == []
+    rows = await world.rows()
+    assert [r["seq"] for r in rows] == list(range(7))
+    assert all(r["verified"] for r in rows)
+
+
+def _stale_marker(seq: int) -> tuple[str, dict[str, Any]]:
+    chain = Path(_CHAIN).stem
+    return (
+        f"audit.chain.broken:{chain}:{seq}",
+        {"seq": seq, "chain": chain, "action": "audit.chain.broken", "outcome": "broken"},
+    )
+
+
+async def test_reverify_clears_a_marker_the_walk_proves_false_and_keeps_the_row(
+    tmp_path: Path,
+) -> None:
+    """Nothing is erased: the false marker stays, its outcome says the walk cleared it."""
+    world = _World(tmp_path)
+    world.write(5)
+    await world.ingest().scan_once()
+    await world.backend.upsert_many(AUDIT_TABLE, [_stale_marker(3)])
+    assert (await query.audit_totals(world.backend))["broken"] == 1
+
+    await world.ingest().reverify()
+
+    (marker,) = await world.broken()
+    assert marker["seq"] == 3
+    assert marker["outcome"] == "cleared"
+    assert marker["cleared_by"] == "did:arc:arcstore:ingest"
+    assert marker["cleared_at"]
+    assert await query.audit_totals(world.backend) == {"total": 5, "verified": 5, "broken": 0}
+
+
+async def test_reverify_keeps_markers_at_or_after_a_real_break(tmp_path: Path) -> None:
+    """The walk can vouch only for records before the break; later markers stand."""
+    world = _World(tmp_path)
+    world.write(5)
+    await world.ingest().scan_once()
+    world.tamper(2)
+    await world.backend.upsert_many(AUDIT_TABLE, [_stale_marker(1), _stale_marker(4)])
+
+    await world.ingest().reverify()
+
+    outcomes = {m["seq"]: m["outcome"] for m in await world.broken()}
+    assert outcomes == {1: "cleared", 2: "broken", 4: "broken"}
+    assert (await query.audit_totals(world.backend))["broken"] == 2
+
+
+async def test_reverify_without_a_key_clears_no_marker(tmp_path: Path) -> None:
+    world = _World(tmp_path)
+    world.write(3)
+    await world.ingest().scan_once()
+    await world.backend.upsert_many(AUDIT_TABLE, [_stale_marker(1)])
+
+    await world.ingest(key=False).reverify()
+
+    assert [m["outcome"] for m in await world.broken()] == ["broken"]

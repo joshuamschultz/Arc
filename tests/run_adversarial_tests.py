@@ -178,7 +178,9 @@ SCENARIOS: dict[str, tuple[str, ...]] = {
     # chain breaks the record hash; a replayed record breaks the chain and every
     # row after it; a cancelled request's binding never leaks into the next;
     # background work never inherits a request; the operator key never stands
-    # in for a UI session, a scheduler or an unbound caller.
+    # in for a UI session, a scheduler or an unbound caller. A chain that grows
+    # during a reverify never yields a false break, and reverify clears only a
+    # break marker its walk proves false (never deletes; keyless clears none).
     "forged audit attribution, forged signer and replayed audit records": (
         "packages/arctrust/tests/test_causal.py",
         "packages/arcrun/tests/test_causal_binding.py",
