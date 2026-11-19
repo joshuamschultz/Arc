@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING, Any
 import arcagent
 import arctrust
 from arcgateway import team_roster
+from arcgateway.adapters.supervisor import AdapterSupervisor
 from arcgateway.approval_notifications import (
     ApprovalNotificationFanout,
     GatewayApprovalNotificationSink,
@@ -717,6 +718,7 @@ def create_app(
         # need the WebPlatformAdapter (chat_ws), the SessionRouter (admin
         # tools) or the executor (introspection) read them from there.
         embedded_gateway = None
+        platform_adapters: AdapterSupervisor | None = None
         standalone_broker = None
         if gateway_config is not None and team_root is not None:
             from arcgateway.bootstrap import build_for_embedded
@@ -759,9 +761,13 @@ def create_app(
             # Connect each adapter once so it's ready for inbound traffic.
             # web_adapter is the core in-process adapter; embedded_gateway.adapters
             # holds every remote-platform adapter built by the plugin registry.
-            for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
-                if adapter is not None:
-                    await adapter.connect()
+            # Remote platforms start under a supervisor: one platform's network
+            # outage degrades that platform instead of aborting this process.
+            if embedded_gateway.web_adapter is not None:
+                await embedded_gateway.web_adapter.connect()
+            platform_adapters = AdapterSupervisor(embedded_gateway.adapters)
+            await platform_adapters.start()
+            starlette_app.state.platform_adapters = platform_adapters
             # SPEC-061 COMP-023: the workflow screens read and write through
             # the SAME control plane the CLI and the agent tools use, composed
             # onto the runner the gateway just started. Without this the routes
@@ -892,6 +898,8 @@ def create_app(
                 logger.exception("lifespan: error stopping task_store backend")
             # SPEC-023: shut adapters down in reverse — disconnect cancels
             # all per-socket tasks and closes the WebSockets cleanly.
+            if platform_adapters is not None:
+                await platform_adapters.stop()
             if embedded_gateway is not None:
                 for adapter in (embedded_gateway.web_adapter, *embedded_gateway.adapters):
                     if adapter is None:

@@ -316,13 +316,13 @@ async def test_run_polling_loop_unhandled_error_sets_fatal_not_retryable() -> No
 
 
 # ---------------------------------------------------------------------------
-# _initialize_with_retry: network error exhausted retries
+# _initialize_bot: one attempt; retry policy belongs to connect()
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_initialize_with_retry_exhausted_raises_runtime_error() -> None:
-    """_initialize_with_retry() raises RuntimeError after all network retries are exhausted."""
+async def test_initialize_bot_makes_one_attempt_and_raises() -> None:
+    """_initialize_bot() never retries or records fatal state; callers decide."""
     adapter = _make_adapter()
     mock_app = _make_mock_application()
     adapter._application = mock_app
@@ -330,27 +330,11 @@ async def test_initialize_with_retry_exhausted_raises_runtime_error() -> None:
     NetworkError = type("NetworkError", (Exception,), {})
     mock_app.initialize = AsyncMock(side_effect=NetworkError("connection failed"))
 
-    with patch("asyncio.sleep", new=AsyncMock()):
-        with pytest.raises(RuntimeError, match="persistent NetworkError"):
-            await adapter._initialize_with_retry()
+    with pytest.raises(NetworkError, match="connection failed"):
+        await adapter._initialize_bot()
 
-    assert adapter._fatal_retryable is True
-
-
-@pytest.mark.asyncio
-async def test_initialize_with_retry_non_network_error_raises_immediately() -> None:
-    """_initialize_with_retry() raises immediately for non-NetworkError."""
-    adapter = _make_adapter()
-    mock_app = _make_mock_application()
-    adapter._application = mock_app
-
-    mock_app.initialize = AsyncMock(side_effect=ValueError("bad token"))
-
-    with pytest.raises(ValueError, match="bad token"):
-        await adapter._initialize_with_retry()
-
-    # Non-network errors are not retryable
-    assert adapter._fatal_retryable is False
+    assert mock_app.initialize.await_count == 1
+    assert adapter._fatal_error is None
 
 
 # ---------------------------------------------------------------------------

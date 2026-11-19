@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- The lifespan starts remote chat platforms through `AdapterSupervisor`, so one
+  platform's network outage no longer aborts startup.
+- `GET /api/team/gateways` adds `status` and `last_error` per platform. The
+  dashboard does not show these fields yet (API only, no bundle rebuild).
+
 ## [0.7.0] - 2026-10-11
 
 ### Added
