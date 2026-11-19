@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Telegram: a network failure during init no longer raises out of `connect()`.
+  The adapter reports `degraded` through `health()` and retries init in the
+  background with capped backoff and no attempt limit, then starts polling.
+  Non-network init failures (bad token) still raise.
+- New `arcgateway.adapters.supervisor.AdapterSupervisor` starts remote platform
+  adapters in isolation for the embedded gateway: a transient failure degrades
+  that adapter and retries it; any other failure still raises.
+
 - Gateway sessions no longer project operator turns into the Agent Inbox; session history and
   agent mail are separate surfaces.
 - Agent-to-agent mail remains entirely ArcTeam-owned. Gateway adapters deliver

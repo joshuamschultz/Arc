@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- A network outage at startup no longer takes down `arc ui start`. Telegram
+  now starts degraded and keeps retrying in the background (up to 60 s
+  between tries, with no limit) until it connects. A bad token still stops
+  startup. Other chat platforms that fail with a network error at startup
+  are retried in the background and no longer stop the process.
+- `GET /api/team/gateways` reports `status` and `last_error` for each chat
+  platform.
+
 ## [0.6.0] - 2026-10-11
 
 Release for app principals, work intake and work events, and an audit

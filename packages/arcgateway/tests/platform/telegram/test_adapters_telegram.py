@@ -213,7 +213,7 @@ def test_adapter_rejects_empty_token() -> None:
 async def test_connect_calls_bot_initialize() -> None:
     """connect() must initialize the bot application (token verification).
 
-    We test _initialize_with_retry() directly — it is the codepath connect()
+    We test _initialize_bot() directly — it is the codepath connect()
     calls to verify the token and populate bot_id. The Application object is
     injected manually (avoids patching a module-level name that doesn't exist
     since Application is lazily imported inside connect()).
@@ -224,7 +224,7 @@ async def test_connect_calls_bot_initialize() -> None:
     # Inject the mock application directly — this is the path connect() takes
     adapter._application = mock_app
 
-    await adapter._initialize_with_retry()
+    await adapter._initialize_bot()
 
     # Both must be called: initialize() verifies the token; get_me() fetches bot info.
     mock_app.initialize.assert_called_once()
@@ -238,7 +238,7 @@ async def test_connect_sets_bot_id() -> None:
     mock_app = _make_mock_application()
     adapter._application = mock_app
 
-    await adapter._initialize_with_retry()
+    await adapter._initialize_bot()
 
     assert adapter._bot_id == 99
 
@@ -263,7 +263,7 @@ async def test_connect_enables_concurrent_updates(monkeypatch: pytest.MonkeyPatc
     fake_ext.Application = application_cls
     monkeypatch.setitem(sys.modules, "telegram", MagicMock())
     monkeypatch.setitem(sys.modules, "telegram.ext", fake_ext)
-    monkeypatch.setattr(adapter, "_initialize_with_retry", AsyncMock())
+    monkeypatch.setattr(adapter, "_initialize_bot", AsyncMock())
     monkeypatch.setattr(adapter, "_run_polling_loop", AsyncMock())
 
     await adapter.connect()

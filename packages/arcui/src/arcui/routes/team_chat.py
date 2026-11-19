@@ -328,8 +328,14 @@ async def list_gateways(request: Request) -> JSONResponse:
     that stores the bound agent's URI. Grows automatically as platforms are
     connected. ``web`` is the in-process browser surface, never a narration
     target, so it is excluded. Read-only; raw ``gateway.toml``, no secrets.
+
+    Each entry also carries the live connection ``status`` (connected,
+    connecting, degraded, failed, disconnected; ``unavailable`` when enabled
+    but not running in this process, ``unknown`` when no gateway is embedded)
+    and ``last_error``, so a platform that lost its network shows as down
+    rather than looking healthy.
     """
-    del request
+    supervisor = getattr(request.app.state, "platform_adapters", None)
     from arctrust.paths import config_file
 
     path = config_file("gateway.toml")
@@ -347,14 +353,27 @@ async def list_gateways(request: Request) -> JSONResponse:
     for name, block in (data.get("platforms") or {}).items():
         if name == "web" or not isinstance(block, dict) or not block.get("enabled"):
             continue
+        platform = str(block.get("platform", name))
+        agent_did = str(block.get("agent_did", "") or default_did)
         gateways.append(
             {
                 "name": name,
-                "platform": str(block.get("platform", name)),
-                "agent_did": str(block.get("agent_did", "") or default_did),
+                "platform": platform,
+                "agent_did": agent_did,
+                **_gateway_health(supervisor, platform, agent_did),
             }
         )
     return JSONResponse({"gateways": gateways})
+
+
+def _gateway_health(supervisor: Any, platform: str, agent_did: str) -> dict[str, str | None]:
+    """Live ``status`` / ``last_error`` for one configured platform bot."""
+    if supervisor is None:
+        return {"status": "unknown", "last_error": None}
+    health = supervisor.health_of(platform, agent_did)
+    if health is None:
+        return {"status": "unavailable", "last_error": None}
+    return {"status": health["state"], "last_error": health["last_error"]}
 
 
 routes = [

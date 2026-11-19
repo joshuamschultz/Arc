@@ -15,10 +15,14 @@ Polling-conflict pattern (T1.10):
     so GatewayRunner's reconnect watcher restarts us cleanly.
 
 NetworkError:
-    During initialization, transient network failures (no internet, DNS blip)
-    are retried up to 5 times with exponential backoff capped at 60 s. In the
-    polling loop, a NetworkError backs off once then sets a fatal-retryable
-    error so GatewayRunner restarts the adapter.
+    A transient network failure (no internet, DNS blip) during initialization
+    never fails connect(): the adapter reports itself degraded through
+    health(), returns so the host process keeps starting, and retries init in
+    the background with exponential backoff capped at 60 s and no attempt
+    limit, starting polling once Telegram answers. Only a non-network init
+    failure (bad token, auth rejected) raises. In the polling loop, a
+    NetworkError backs off once then sets a fatal-retryable error so
+    GatewayRunner restarts the adapter.
 
 Auth:
     Inbound user_id must be in allowed_user_ids. Empty allowlist = deny all
@@ -85,7 +89,6 @@ _TELEGRAM_MAX_COMMANDS = 100
 _CONFLICT_BACKOFF_SECONDS = 1.0
 
 # ── NetworkError retry parameters ────────────────────────────────────────────
-_NETWORK_MAX_RETRIES = 5
 _NETWORK_BACKOFF_BASE_SECONDS = 2.0
 _NETWORK_BACKOFF_CAP_SECONDS = 60.0
 
@@ -136,6 +139,10 @@ class TelegramAdapter:
             fatal-retryable reconnect once it reaches _MAX_CONSECUTIVE_UPDATE_ERRORS.
         _drop_pending_updates: True only for the first clean start; a reconnect
             must NOT drop the messages that queued during the outage.
+        _state: Connection state reported by health(): disconnected,
+            connecting, connected, degraded (retrying) or failed.
+        _last_error: Most recent failure, reported by health().
+        _init_task: Background init retry while degraded at startup.
     """
 
     name = "telegram"
@@ -223,19 +230,23 @@ class TelegramAdapter:
         self._closed_event = asyncio.Event()
         self._consecutive_update_errors = 0
         self._drop_pending_updates = True
+        self._state = "disconnected"
+        self._last_error: Exception | None = None
+        self._init_task: asyncio.Task[None] | None = None
 
     # ── BasePlatformAdapter Protocol ──────────────────────────────────────────
 
     async def connect(self) -> None:
         """Initialize the Telegram bot and start polling.
 
-        Handles polling-conflict (bounded retries → fatal-retryable) and
-        NetworkError (bounded retries → fatal-retryable). Returns promptly
-        after starting the background polling task.
+        Returns promptly. A network failure during init does not raise: the
+        adapter goes degraded and retries in the background (see module
+        docstring), so a Telegram outage at boot cannot stop the host process.
 
         Raises:
             ImportError: If python-telegram-bot is not installed.
-            RuntimeError: On fatal auth failure (invalid token etc.).
+            Exception: The init error itself when it is not a network failure
+                (invalid token, auth rejected) — a misconfiguration to surface.
         """
         try:
             from telegram.ext import Application
@@ -248,6 +259,7 @@ class TelegramAdapter:
 
         _logger.info("TelegramAdapter: connecting (agent_did=%s)", self._agent_did)
         self._running = True
+        self._state = "connecting"
 
         # Re-arm liveness so a reconnect starts observably clean: a fresh
         # _closed_event the runner's wait_closed() can block on, and cleared
@@ -268,8 +280,80 @@ class TelegramAdapter:
         self._register_handlers()
 
         # Initialize the bot (one-time API call to verify token + get bot_info).
-        await self._initialize_with_retry()
+        try:
+            await self._initialize_bot()
+        except Exception as exc:  # reason: network → degrade and retry; anything else re-raised
+            if not _is_network_error(exc):
+                self._set_fatal_error(exc, retryable=False)
+                raise
+            self._enter_degraded_init(exc)
+            return
+        await self._start_polling()
 
+    def health(self) -> dict[str, str | None]:
+        """Report connection state and the last error, for status surfaces.
+
+        ``state`` is one of disconnected, connecting, connected, degraded
+        (retrying on its own) or failed (needs an operator). The error text is
+        scrubbed of the bot token: transport errors can echo the request URL,
+        which embeds it.
+        """
+        error = None
+        if self._last_error is not None:
+            error = str(self._last_error).replace(self._bot_token, "<redacted>")
+        return {"state": self._state, "last_error": error}
+
+    def _enter_degraded_init(self, exc: Exception) -> None:
+        """Record a network failure at init and start the background retry."""
+        self._state = "degraded"
+        self._last_error = exc
+        _logger.error(
+            "TelegramAdapter: Telegram unreachable at startup (%s). Running DEGRADED "
+            "(agent=%s); retrying in the background until it connects.",
+            exc,
+            self._agent_did,
+        )
+        self._audit(
+            _EVENT_FAIL,
+            {
+                "platform": "telegram",
+                "error": str(exc),
+                "retryable": True,
+                "agent_did": self._agent_did,
+            },
+        )
+        self._init_task = asyncio.create_task(
+            self._retry_init_until_connected(), name="telegram:init_retry"
+        )
+
+    async def _retry_init_until_connected(self) -> None:
+        """Retry init with capped backoff, without limit, until it succeeds.
+
+        No attempt limit: a host whose uplink is down for hours must pick
+        Telegram back up on its own. A non-network failure ends the retry as
+        fatal, which wait_closed() reports to a supervising runner.
+        """
+        attempt = 1
+        while self._running:
+            await asyncio.sleep(_network_backoff(attempt))
+            try:
+                await self._initialize_bot()
+            except Exception as exc:  # reason: network → keep retrying; anything else is fatal
+                if not _is_network_error(exc):
+                    _logger.error("TelegramAdapter: init failed fatally while degraded: %s", exc)
+                    self._set_fatal_error(exc, retryable=False)
+                    return
+                self._last_error = exc
+                attempt += 1
+                _logger.warning(
+                    "TelegramAdapter: still unreachable (attempt %d): %s", attempt, exc
+                )
+                continue
+            await self._start_polling()
+            return
+
+    async def _start_polling(self) -> None:
+        """Publish the command menu, launch the polling task, mark connected."""
         # Publish the native "/" command menu now that the bot is live. Cosmetic
         # and best-effort: a failed setMyCommands must not stop the adapter.
         await self._publish_command_menu()
@@ -279,6 +363,8 @@ class TelegramAdapter:
             self._run_polling_loop(),
             name="telegram:polling_loop",
         )
+        self._state = "connected"
+        self._last_error = None
 
         _logger.info(
             "TelegramAdapter: connected (bot_id=%s agent=%s)",
@@ -338,6 +424,15 @@ class TelegramAdapter:
         """
         _logger.info("TelegramAdapter: disconnecting")
         self._running = False
+        self._state = "disconnected"
+
+        if self._init_task is not None and not self._init_task.done():
+            self._init_task.cancel()
+            try:
+                await self._init_task
+            except asyncio.CancelledError:
+                pass
+        self._init_task = None
 
         if self._polling_task is not None and not self._polling_task.done():
             self._polling_task.cancel()
@@ -618,52 +713,25 @@ class TelegramAdapter:
         # Error handler so update errors are logged rather than silently swallowed.
         self._application.add_error_handler(self._on_error)
 
-    async def _initialize_with_retry(self) -> None:
-        """Initialize the bot with NetworkError retry.
+    async def _initialize_bot(self) -> None:
+        """Verify the token and fetch bot_info — one attempt; raises on failure.
 
-        Verifies the token and fetches bot_info. Raises on persistent failure.
-        Called from connect() after _application is built.
+        Called from connect() after _application is built; retry policy lives
+        with the callers (connect() and the degraded-init retry loop).
         """
-        # _initialize_with_retry is only called from connect() after _application is set.
+        # _initialize_bot is only called after connect() has set _application.
         if self._application is None:  # pragma: no cover
-            msg = "_initialize_with_retry called before connect()"
+            msg = "_initialize_bot called before connect()"
             raise RuntimeError(msg)
 
-        max_retries = _NETWORK_MAX_RETRIES
-        for attempt in range(1, max_retries + 1):
-            try:
-                await self._application.initialize()
-                bot_info = await self._application.bot.get_me()
-                self._bot_id = bot_info.id
-                _logger.info(
-                    "TelegramAdapter: authenticated as @%s (id=%d)",
-                    bot_info.username,
-                    bot_info.id,
-                )
-                return
-            except Exception as exc:  # reason: fail-open — log + continue
-                if _is_network_error(exc):
-                    backoff = _network_backoff(attempt)
-                    _logger.warning(
-                        "TelegramAdapter: NetworkError during init (attempt %d/%d): %s. "
-                        "Retrying in %.0fs.",
-                        attempt,
-                        max_retries,
-                        exc,
-                        backoff,
-                    )
-                    if attempt < max_retries:
-                        await asyncio.sleep(backoff)
-                        continue
-                    # Exhausted retries
-                    self._set_fatal_error(exc, retryable=True)
-                    raise RuntimeError(
-                        f"TelegramAdapter: persistent NetworkError during init after "
-                        f"{max_retries} attempts"
-                    ) from exc
-                # Non-network error (bad token, auth failure) — fatal, not retryable
-                self._set_fatal_error(exc, retryable=False)
-                raise
+        await self._application.initialize()
+        bot_info = await self._application.bot.get_me()
+        self._bot_id = bot_info.id
+        _logger.info(
+            "TelegramAdapter: authenticated as @%s (id=%d)",
+            bot_info.username,
+            bot_info.id,
+        )
 
     # ── Internal: Polling Loop ────────────────────────────────────────────────
 
@@ -1038,6 +1106,8 @@ class TelegramAdapter:
         """
         self._fatal_error = exc
         self._fatal_retryable = retryable
+        self._state = "degraded" if retryable else "failed"
+        self._last_error = exc
         # Unblock wait_closed() so GatewayRunner observes the death and drives
         # reconnect — the signal the loop previously dropped on the floor.
         self._closed_event.set()
