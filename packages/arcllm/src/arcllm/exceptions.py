@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+# Import contract exception and create alias
+from arcllm.contract.errors import ModelStreamProtocolError
+
 # Type-only imports — keeps exceptions.py at the bottom of the dependency
 # graph (no runtime import of modules/injection.py or modules/guardrails.py,
 # which would create a cycle since those modules import from here).
@@ -29,17 +32,8 @@ class ArcLLMParseError(ArcLLMError):
         super().__init__(f"Failed to parse tool call arguments: {original_error}")
 
 
-class ArcLLMStreamProtocolError(ArcLLMError):
-    """Raised when provider stream frames cannot form a valid response.
-
-    The message is intentionally provider-neutral and contains no model output,
-    tool arguments, or raw wire payload. Callers can safely surface it as a
-    stable failure class without leaking streamed content.
-    """
-
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(f"Invalid streamed tool call: {reason}")
+# Legacy alias for backward compatibility
+ArcLLMStreamProtocolError = ModelStreamProtocolError
 
 
 class ArcLLMConfigError(ArcLLMError):
